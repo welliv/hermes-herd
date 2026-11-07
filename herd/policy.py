@@ -53,6 +53,12 @@ DEFAULT_LOCAL_ONLY: tuple[str, ...] = (
 # Env vars that describe a machine rather than a person. Values are copied only
 # when a user explicitly asks for them.
 DEFAULT_SECRET_SKIP: tuple[str, ...] = (
+    # A bot token makes whichever machine holds it start answering. Two machines
+    # with the same token both answer every message, so these stay put even
+    # though they are secrets the user would otherwise want to carry.
+    "TELEGRAM_BOT_TOKEN", "TELEGRAM_HOME_CHANNEL*", "DISCORD_BOT_TOKEN",
+    "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "MATRIX_ACCESS_TOKEN", "SIGNAL_*",
+    "WHATSAPP_*", "TWILIO_*", "TEAMS_*",
     "PATH", "HOME", "USER", "SHELL", "PWD", "OLDPWD", "LANG", "LC_*", "TZ", "TERM",
     "HOSTNAME", "DISPLAY", "XAUTHORITY", "XDG_*", "SSH_*", "GPG_*",
     "HERMES_HOME", "HERMES_INSTALL*", "HERMES_DASHBOARD_*", "HERMES_WEBAPP_*",

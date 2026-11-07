@@ -170,6 +170,14 @@ def test_shared_overrides_the_default_local_rule():
     assert p.is_local_only("platforms.discord.enabled")
 
 
+def test_gateway_tokens_stay_put():
+    """The same bot token on two machines means both answer every message."""
+    p = policy.Policy()
+    for name in ("TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "SLACK_APP_TOKEN"):
+        assert not p.secret_allowed(name), name
+    assert p.secret_allowed("OPENAI_API_KEY")
+
+
 def test_machine_env_vars_stay_put():
     p = policy.Policy()
     assert not p.secret_allowed("PATH")
