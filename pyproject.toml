@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-herd"
+version = "1.0.0"
+description = "Keep one Hermes across every machine: per-key settings sync, encrypted secrets, restorable backups."
+requires-python = ">=3.10"
+dependencies = ["cryptography>=41", "ruamel.yaml>=0.17"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
