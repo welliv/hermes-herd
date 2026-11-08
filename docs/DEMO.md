@@ -1,10 +1,11 @@
 # The 75-second demo
 
-Silent screen film. Captions carry the argument, so it reads with the sound off;
-the same words work as a voiceover if you record one. Rendered from
-`render.py` — every line on screen is real `hermes sync` output, re-typeset.
+Narrated screen film. Every line on screen is real `hermes sync` output,
+re-typeset; the captions carry the same argument, so the silent cut works on its
+own for anyone watching muted.
 
-**File:** `docs/media/herd-demo.mp4` · 1920×1080 · 30 fps · 75 s · 1.4 MB
+**Narrated:** `docs/media/herd-demo.mp4` · 2.6 MB · −16.4 LUFS · 48 kHz stereo
+**Silent:** `docs/media/herd-demo-silent.mp4` · 1.4 MB
 **Subtitles:** `docs/media/herd-demo.srt` · **Poster:** `docs/media/poster.png`
 
 ## Shot list
@@ -21,21 +22,29 @@ the same words work as a voiceover if you record one. Rendered from
 | 1:00 | `xxd` of a store object — ciphertext | Encrypted before it ever leaves the machine. |
 | 1:07 | End card: *Every tool copies `~/.hermes`. Herd understands `config.yaml.`* | — |
 
-## Voiceover (if you record one)
+## Narration
 
-Speak at the caption, not before it. Roughly 100 words for 75 seconds — leave air.
+Eleven clips, each placed on its beat rather than one continuous take, so the
+voice lands on the cut instead of drifting against it.
 
-> Everything your agent has learned lives in this folder. On one computer.
->
-> Copy the folder to a second machine and you copy the machine with it — its Docker path, its ports, its bot token. Something breaks, quietly.
->
-> Herd. One command gives you a recovery code. Paste it on the laptop and the same agent is there: same model, same skills, same memory.
->
-> It takes what's yours. It leaves what's the machine's. When both machines change the same setting, yours wins and it tells you. Every pull leaves a backup.
->
-> And it's encrypted before anything leaves the device.
->
-> Every tool copies `~/.hermes`. Herd understands `config.yaml`.
+| In | Line |
+|---|---|
+| 0:00 | Everything this agent has learned about me lives in one folder. |
+| 0:06 | Copy the folder, and you copy the machine with it. Its Docker path, its ports. Something breaks. |
+| 0:16 | Herd. One command, and one recovery code. |
+| 0:24 | Paste it on the laptop, and the same agent is there. Same model, same skills, same memory. |
+| 0:31 | It takes what's mine. |
+| 0:36 | And it leaves what belongs to the machine. |
+| 0:39 | Its own Docker path, its own port, its own bot token. |
+| 0:44 | Everything else follows you. |
+| 0:47 | When both machines change the same setting, mine wins. And it tells me. |
+| 0:55 | Every pull leaves a backup. |
+| 1:01 | And it's encrypted before anything leaves the device. |
+| 1:07 | Every tool copies the whole folder. Herd understands what's inside it. |
+
+Spoken in the first person because the film shows one person's machine; the
+closing line drops `config.yaml` for plain English — the card says it, and
+"config dot yaml" is heard as "config that yaml" by half of listeners.
 
 ## Why it is cut this way
 
@@ -50,8 +59,10 @@ Speak at the caption, not before it. Roughly 100 words for 75 seconds — leave 
 - **The honest beat stays.** Showing a conflict is retail for a sync tool that
   other tools skip; it is also the moment a technical viewer decides whether to
   trust the thing.
-- **Silence is deliberate.** Terminal footage plus a synthetic voice pulls the
-  eye to the least real element. Captions first, a human voice if you add one.
+- **Voice over silence, deliberately.** The narration stays first person and
+  never describes the frame ("as you can see"); it says the thing the frame
+  means. Lines end before their caption does, so the viewer reads the last
+  words rather than hearing them twice.
 
 ## Re-rendering
 
