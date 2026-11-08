@@ -9,7 +9,7 @@ Settings, skills, memory and API keys follow you between devices. Each machine k
 ## Install
 
 ```bash
-git clone https://github.com/welliv/herd ~/.hermes/plugins/herd
+git clone https://github.com/welliv/hermes-herd ~/.hermes/plugins/herd
 hermes plugins enable herd
 ```
 
