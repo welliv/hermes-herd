@@ -24,4 +24,11 @@ jobs:
       - name: Unit + end-to-end tests
         run: python -m pytest tests -q
       - name: Manifests parse
-        run: python -c "import yaml,sys; yaml.safe_load(open('plugin.yaml')); print('plugin.yaml ok')"
+        run: |
+          python - <<'PY'
+          from ruamel.yaml import YAML
+          doc = YAML(typ="safe").load(open("plugin.yaml").read())
+          assert doc["name"] == "herd", doc.get("name")
+          assert doc["provides_tools"], "no tools declared"
+          print("plugin.yaml ok:", doc["name"], doc["version"])
+          PY

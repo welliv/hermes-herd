@@ -11,10 +11,16 @@ import logging
 import threading
 import time
 
-from .herd import engine, tools
-from .herd.cli import register_cli, sync_command
-from .herd.policy import Policy
-from .herd.util import hermes_home, now
+try:  # loaded by Hermes as a package
+    from .herd import engine, tools
+    from .herd.cli import register_cli, sync_command
+    from .herd.policy import Policy
+    from .herd.util import hermes_home, now
+except ImportError:  # imported as a top-level module (pytest collection, ad-hoc)
+    from herd import engine, tools
+    from herd.cli import register_cli, sync_command
+    from herd.policy import Policy
+    from herd.util import hermes_home, now
 
 logger = logging.getLogger(__name__)
 
