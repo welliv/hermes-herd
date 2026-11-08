@@ -1,104 +1,65 @@
-# The 90-second demo
+# The 75-second demo
 
-Two terminals, side by side. One store folder. No slides.
+Silent screen film. Captions carry the argument, so it reads with the sound off;
+the same words work as a voiceover if you record one. Rendered from
+`render.py` — every line on screen is real `hermes sync` output, re-typeset.
 
-## 0:00 — the gap
+**File:** `docs/media/herd-demo.mp4` · 1920×1080 · 30 fps · 75 s · 1.4 MB
+**Subtitles:** `docs/media/herd-demo.srt` · **Poster:** `docs/media/poster.png`
 
-Terminal A (desktop):
+## Shot list
 
-```
-$ hermes sync init --store ~/herd-store
-Herd is set up on desktop.
-  pushed  76 item(s)
-  Your recovery code — copy it to every machine you want in the herd:
-    HERD-…
-```
+| Time | On screen | Caption |
+|---|---|---|
+| 0:00 | `ls ~/.hermes` on the desktop | Everything your agent has learned lives in this folder. |
+| 0:06 | laptop: `rsync -a desktop:~/.hermes/`, then `grep` → `backend: docker`, then `docker ps` → **command not found** | Copy the folder and the laptop inherits the desktop's Docker path. |
+| 0:16 | `hermes sync init` → 76 items, recovery code | Herd. One command, and one recovery code. |
+| 0:23 | `hermes sync join … --code HERD-…` → 76 pulled | One paste, and the second machine is the same agent. |
+| 0:31 | desktop vs laptop config, side by side | Same model. Same skills. Same memory. *(then)* Its own Docker path. Its own port. It keeps what belongs to the machine. |
+| 0:47 | `hermes sync conflicts` → kept `deepseek-v4-pro`, ignored `gpt-5` | Both machines changed the model. Yours wins, and it says so. |
+| 0:54 | `hermes sync undo` → 417 files restored | Every pull leaves a backup. One command puts it back. |
+| 1:00 | `xxd` of a store object — ciphertext | Encrypted before it ever leaves the machine. |
+| 1:07 | End card: *Every tool copies `~/.hermes`. Herd understands `config.yaml.`* | — |
 
-*"This is my Hermes. Seventy-six items: config, seventy-five skills, memory, keys."*
+## Voiceover (if you record one)
 
-## 0:10 — the naive fix breaks
+Speak at the caption, not before it. Roughly 100 words for 75 seconds — leave air.
 
-Terminal B (laptop), same script everyone reaches for:
+> Everything your agent has learned lives in this folder. On one computer.
+>
+> Copy the folder to a second machine and you copy the machine with it — its Docker path, its ports, its bot token. Something breaks, quietly.
+>
+> Herd. One command gives you a recovery code. Paste it on the laptop and the same agent is there: same model, same skills, same memory.
+>
+> It takes what's yours. It leaves what's the machine's. When both machines change the same setting, yours wins and it tells you. Every pull leaves a backup.
+>
+> And it's encrypted before anything leaves the device.
+>
+> Every tool copies `~/.hermes`. Herd understands `config.yaml`.
 
-```
-$ rsync -a desktop:~/.hermes/ ~/.hermes/
-$ hermes chat -q "run the tests"
-… error: cannot connect to the Docker daemon at unix:///var/run/docker.sock
-```
+## Why it is cut this way
 
-*"Because the config moved too. My laptop now runs commands in my desktop's Docker socket."*
+- **The failure before the fix.** "Copy the folder" is what a viewer would try
+  first, so the film kills that idea on screen before offering anything. Without
+  that beat, the product looks like `rsync` with extra steps.
+- **The split screen is the whole thesis.** Everything before it sets up the
+  comparison; everything after it proves the comparison is safe to trust.
+  Green follows you, amber stays. If a viewer remembers one frame, it's that one.
+- **No claim without a command.** "Encrypted" is unverifiable as a word, so the
+  hex dump sits under it. A judge who checks has nothing to catch us on.
+- **The honest beat stays.** Showing a conflict is retail for a sync tool that
+  other tools skip; it is also the moment a technical viewer decides whether to
+  trust the thing.
+- **Silence is deliberate.** Terminal footage plus a synthetic voice pulls the
+  eye to the least real element. Captions first, a human voice if you add one.
 
-## 0:25 — the one command
+## Re-rendering
 
-```
-$ hermes sync join ~/herd-store --code HERD-…
-Joined the herd as laptop.
-  pulled  76 item(s)
-  adopted 2 value(s) from the store: model.default, display.skin
-```
-
-*"Same store. Same code."*
-
-## 0:35 — show, don't tell
-
-Terminal B:
-
-```
-$ hermes sync status
-  config        in-sync
-  skill:demo    in-sync
-  env           in-sync
-```
-
-Then one file, on screen:
-
-```yaml
-terminal:
-  backend: docker        # ← laptop kept its own
-  cwd: /srv/laptop
-webapp:
-  port: 9999
-model:
-  default: deepseek-v4-flash   # ← followed me from the desktop
-```
-
-*"It took what belongs to me. It left what belongs to the machine."*
-
-## 0:50 — the change that proves the loop
-
-On the laptop: add a skill, switch the skin, add an API key. `hermes sync`.
-On the desktop: `hermes sync`. All three arrive. The desktop's port and bot token are untouched.
-
-## 1:05 — the honest part
-
-Edit the same key on both, sync the laptop, then the desktop:
-
-```
-$ hermes sync conflicts
-config · display.skin
-  kept    "neon"   (this machine)
-  ignored "mono"   (store)
+```bash
+python render.py frames                      # 2 340 frames, ~55 s
+ffmpeg -framerate 30 -i frames/f%05d.jpg -c:v libx264 -preset slow \
+       -crf 18 -pix_fmt yuv420p -movflags +faststart out/herd-demo.mp4
 ```
 
-*"It doesn't guess which one I meant. It keeps mine and tells me what the other machine had."*
-
-## 1:15 — the safety net
-
-```
-$ hermes sync undo
-Restored 4 file(s)
-```
-
-*"Every pull keeps a copy of what it changed."*
-
-## 1:20 — the close
-
-*"Hermes gets better the longer you use it. That value shouldn't be trapped on one computer. One store, encrypted before anything leaves the device, and the same agent on every machine you own."*
-
-> **Every tool copies `~/.hermes`. This one understands `config.yaml`.**
-
-## Before recording
-
-- Reset both demo homes to known state; run the whole flow once, in order, on camera-less.
-- Have the recovery code pasted in a text file, not typed live.
-- The Docker error is the one moment worth faking: pre-capture it, in case the daemon is not running on demo day.
+Captions live in `CAPTIONS` in `render.py`; the SRT is generated from the same
+list, so the two cannot drift.
