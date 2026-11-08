@@ -13,29 +13,48 @@ Settings, skills, memory and API keys follow you between devices. Each machine k
 Click for sound. No mock-ups — every line of output in it was printed by the
 real CLI.
 
-## Install
+## Try it in 60 seconds
+
+On this machine:
+
+```bash
+hermes plugins install welliv/hermes-herd --enable   # ~40 s, once per machine
+hermes sync init --store ~/herd-store                # prints one recovery code
+```
+
+On the other machine, the same install and one command:
 
 ```bash
 hermes plugins install welliv/hermes-herd --enable
+hermes sync join ~/herd-store --code HERD-…
 ```
 
-Hermes 0.23+. Git only if you want a git-backed store.
-
-## Twenty seconds
-
 ```
-$ hermes sync init
 Herd is set up on desktop.
-  pushed  76 item(s): config, env, memory:agent, memory:user, file:soul,
-          and 71 skills
+  pushed  76 item(s): config, env, memory:agent, memory:user, file:soul, and 71 skills
   Your recovery code — copy it to every machine you want in the herd:
     HERD-…
 
-$ hermes sync join ~/herd-store --code HERD-…
-Joined the herd as laptop.  pulled 76 item(s).
+Joined the herd as laptop.
+  pulled   76 item(s)
+  adopted  4 value(s): model.default, model.provider, display.skin, plugins.enabled
 ```
 
-That is the whole setup. From then on it pulls when a session starts and pushes when it ends: the hook returns in about 10 ms and the work finishes in the background, at most once every two minutes.
+Both machines now run the same agent — same model, same skills, same memory — and each kept its own Docker path, ports and bot tokens. From then on it pulls when a session starts and pushes when it ends: about 10 ms of hook, the work in the background, at most once every two minutes.
+
+**Only one machine?** Use your real Hermes as the desktop and a scratch home as the laptop — that way the numbers are your own:
+
+```bash
+hermes plugins install welliv/hermes-herd --enable    # your real Hermes
+hermes sync init --store ~/herd-store                 # pushes everything you have
+
+HERMES_HOME=/tmp/laptop hermes plugins install welliv/hermes-herd --enable
+HERMES_HOME=/tmp/laptop hermes sync join ~/herd-store --name laptop --code HERD-…
+```
+
+Empty `HERMES_HOME` directories work too, but they only hold a couple of items — the point of the demo is what a home with months of use carries.
+
+Hermes 0.23+. Git only if you want a git-backed store.
 
 ## What moves
 
