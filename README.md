@@ -6,11 +6,15 @@ Settings, skills, memory and API keys follow you between devices. Each machine k
 
 > File sync copies `~/.hermes`. Herd understands `config.yaml`.
 
+## Watch it (75 s)
+
+[`docs/media/herd-demo.mp4`](docs/media/herd-demo.mp4) — no mock-ups; every line
+of output in it was printed by the real CLI.
+
 ## Install
 
 ```bash
-git clone https://github.com/welliv/hermes-herd ~/.hermes/plugins/herd
-hermes plugins enable herd
+hermes plugins install welliv/hermes-herd --enable
 ```
 
 Hermes 0.23+. Git only if you want a git-backed store.
@@ -96,6 +100,8 @@ Machine-bound paths are resolved to the local value before that comparison — i
 
 - [`docs/PROBLEM.md`](docs/PROBLEM.md) — what this solves and why it matters for Hermes
 - [`docs/AUDIT.md`](docs/AUDIT.md) — every claim above, mapped to the test that proves it
-- [`docs/DEMO.md`](docs/DEMO.md) — the 90-second demo script
+- [`docs/DEMO.md`](docs/DEMO.md) — the 75-second demo: shot list and narration
+
+Demo music: Kevin MacLeod — "Perspectives" (incompetech.com), Creative Commons Attribution.
 
 MIT.

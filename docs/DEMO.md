@@ -1,12 +1,17 @@
 # The 75-second demo
 
-Narrated screen film. Every line on screen is real `hermes sync` output,
-re-typeset; the captions carry the same argument, so the silent cut works on its
-own for anyone watching muted.
+Screen film, captions first: it has to work muted, because judges watch in
+tabs. A music bed sits under it at −22 LUFS and leans back when the Docker
+error lands, so the failure is heard rather than covered.
 
-**Narrated:** `docs/media/herd-demo.mp4` · 2.6 MB · −16.4 LUFS · 48 kHz stereo
-**Silent:** `docs/media/herd-demo-silent.mp4` · 1.4 MB
+Every line on screen was printed by the real CLI and re-typeset — no mock-ups,
+no invented output.
+
+**Film:** `docs/media/herd-demo.mp4` · 3.2 MB · 75 s · 48 kHz stereo
+**Silent cut:** `docs/media/herd-demo-silent.mp4` · 1.4 MB
 **Subtitles:** `docs/media/herd-demo.srt` · **Poster:** `docs/media/poster.png`
+**Music:** Kevin MacLeod — "Perspectives" (incompetech.com), CC BY — the credit
+is required, keep it wherever the film is published.
 
 ## Shot list
 
@@ -22,29 +27,15 @@ own for anyone watching muted.
 | 1:00 | `xxd` of a store object — ciphertext | Encrypted before it ever leaves the machine. |
 | 1:07 | End card: *Every tool copies `~/.hermes`. Herd understands `config.yaml.`* | — |
 
-## Narration
+## Sound
 
-Eleven clips, each placed on its beat rather than one continuous take, so the
-voice lands on the cut instead of drifting against it.
+A bed, not a voice. A synthetic voice reading a product name wrong is a defect
+the viewer hears; a quiet bed that is merely a little generic is not. The one
+musical decision: the bed drops to a third of its level at 0:11.9 when the
+Docker error appears, and comes back at 0:17.2 with the first `sync init`.
 
-| In | Line |
-|---|---|
-| 0:00 | Everything this agent has learned about me lives in one folder. |
-| 0:06 | Copy the folder, and you copy the machine with it. Its Docker path, its ports. Something breaks. |
-| 0:16 | Herd. One command, and one recovery code. |
-| 0:24 | Paste it on the laptop, and the same agent is there. Same model, same skills, same memory. |
-| 0:31 | It takes what's mine. |
-| 0:36 | And it leaves what belongs to the machine. |
-| 0:39 | Its own Docker path, its own port, its own bot token. |
-| 0:44 | Everything else follows you. |
-| 0:47 | When both machines change the same setting, mine wins. And it tells me. |
-| 0:55 | Every pull leaves a backup. |
-| 1:01 | And it's encrypted before anything leaves the device. |
-| 1:07 | Every tool copies the whole folder. Herd understands what's inside it. |
-
-Spoken in the first person because the film shows one person's machine; the
-closing line drops `config.yaml` for plain English — the card says it, and
-"config dot yaml" is heard as "config that yaml" by half of listeners.
+Mixed at −22.4 LUFS integrated, peak −8.8 dB, 2.6 s fade in, 5 s fade out.
+It never sits over a claim that needs reading.
 
 ## Why it is cut this way
 
@@ -59,15 +50,14 @@ closing line drops `config.yaml` for plain English — the card says it, and
 - **The honest beat stays.** Showing a conflict is retail for a sync tool that
   other tools skip; it is also the moment a technical viewer decides whether to
   trust the thing.
-- **Voice over silence, deliberately.** The narration stays first person and
-  never describes the frame ("as you can see"); it says the thing the frame
-  means. Lines end before their caption does, so the viewer reads the last
-  words rather than hearing them twice.
+- **Music, not narration.** The film has to be legible muted; a bed adds
+  presence without adding claims. The duck at the failure is the only time the
+  sound comments on the picture.
 
 ## Re-rendering
 
 ```bash
-python render.py frames                      # 2 340 frames, ~55 s
+python render.py frames                      # 2 250 frames, ~55 s
 ffmpeg -framerate 30 -i frames/f%05d.jpg -c:v libx264 -preset slow \
        -crf 18 -pix_fmt yuv420p -movflags +faststart out/herd-demo.mp4
 ```
