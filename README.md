@@ -8,8 +8,10 @@ Settings, skills, memory and API keys follow you between devices. Each machine k
 
 ## Watch it (75 s)
 
-[`docs/media/herd-demo.mp4`](docs/media/herd-demo.mp4) — no mock-ups; every line
-of output in it was printed by the real CLI.
+[![Herd: settings, skills, memory and keys follow you between machines](docs/media/herd-demo.gif)](docs/media/herd-demo.mp4)
+
+Click for sound. No mock-ups — every line of output in it was printed by the
+real CLI.
 
 ## Install
 
