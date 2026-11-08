@@ -255,3 +255,23 @@ def test_lock_prevents_two_writers(tmp_path):
         with pytest.raises(Exception):
             with file_lock(lock, timeout=0.2):
                 pass
+
+def test_conflicts_disappear_once_the_sides_agree(herd):
+    """The conflict list is the state of the last pull, not a history log."""
+    b = make_home(herd["root"], "b")
+    engine.join(b, str(herd["store"]), herd["code"], name="laptop")
+    for home, skin in ((herd["a"], "neon"), (b, "mono")):
+        text = (home / "config.yaml").read_text().replace("skin: default", f"skin: {skin}")
+        (home / "config.yaml").write_text(text)
+    engine.push(engine.open_context(b))
+    engine.pull(engine.open_context(herd["a"]))
+    assert [r["path"] for r in engine.conflicts(herd["a"])] == ["display.skin"]
+
+    # A accepts the store's value; the next pull meets no disagreement.
+    (herd["a"] / "config.yaml").write_text(
+        (herd["a"] / "config.yaml").read_text().replace("skin: neon", "skin: mono")
+    )
+    # Resolving by hand is enough: the list reflects the live config, not the log.
+    assert engine.conflicts(herd["a"]) == []
+    engine.pull(engine.open_context(herd["a"]))
+    assert engine.conflicts(herd["a"]) == []

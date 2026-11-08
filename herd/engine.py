@@ -412,8 +412,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
         base_doc["saved_at"] = now()
         write_json(ctx.data / "base.json", base_doc)
 
-        if conflicts:
-            _record_conflicts(ctx, conflicts)
+        _record_conflicts(ctx, conflicts)
         ctx.state["last_pull"] = now()
         ctx.state["last_sync"] = now()
         write_json(ctx.data / "state.json", ctx.state)
@@ -623,20 +622,43 @@ def diff(home: Path) -> dict:
 
 
 def conflicts(home: Path) -> list[dict]:
+    """Conflicts the user still has to decide.
+
+    Entries are filtered against the live config: if the value this machine
+    holds now equals the one the store offered, the disagreement has been
+    settled by hand and must not keep showing up in the list.
+    """
     data = data_dir(Path(home))
-    return (read_json(data / "conflicts.json", {}) or {}).get("entries", [])
+    entries = (read_json(data / "conflicts.json", {}) or {}).get("entries", []) or []
+    if not entries:
+        return []
+    try:
+        live = yamlutil.safe_load((Path(home) / "config.yaml").read_text()) or {}
+    except Exception:
+        return entries
+    settled = []
+    for row in entries:
+        path = row.get("path") or ""
+        node = live
+        for part in path.split("."):
+            node = node.get(part) if isinstance(node, dict) else None
+        if row.get("item") == "config" and node is not None and str(node) == str(row.get("remote")):
+            continue
+        settled.append(row)
+    return settled
 
 
 def _record_conflicts(ctx: Context, found: list[dict]) -> None:
+    """Record the disagreements the last pull actually met.
+
+    Not an append-only log: once the two sides agree again the entry has to go,
+    otherwise `hermes sync conflicts` lists every disagreement the machine has
+    ever had and the command becomes noise the user learns to ignore.
+    """
     path = ctx.data / "conflicts.json"
-    doc = read_json(path, {}) or {"entries": []}
-    entries = doc.get("entries") or []
-    for row in found:
-        row = dict(row)
-        row["at"] = iso()
-        entries.append(row)
-    doc["entries"] = entries[-200:]
-    write_json(path, doc)
+    stamp = iso()
+    entries = [dict(row, at=stamp) for row in found]
+    write_json(path, {"entries": entries[-200:]})
 
 
 def sync(home: Path) -> dict:
