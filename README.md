@@ -1,93 +1,101 @@
 # Herd
 
-**Every other tool copies `~/.hermes`. This one understands `config.yaml`.**
+Keep one Hermes across every machine.
 
-Herd keeps one Hermes across every machine you use. Settings, skills, memory and API keys follow you; each machine keeps what belongs to it. The store is encrypted before anything leaves the device, and every sync leaves a backup you can restore with one command.
+Settings, skills, memory and API keys follow you between devices. Each machine keeps what belongs to it — its Docker path, its ports, its bot tokens. The store is encrypted before anything leaves the device, and every pull leaves a backup you can undo.
+
+> File sync copies `~/.hermes`. Herd understands `config.yaml`.
+
+## Install
+
+```bash
+git clone https://github.com/welliv/herd ~/.hermes/plugins/herd
+hermes plugins enable herd
+```
+
+Hermes 0.23+. Git only if you want a git-backed store.
+
+## Twenty seconds
 
 ```
-hermes sync init            # on the machine you already use
-hermes sync join <store>    # on the next one, with the recovery code
-hermes sync                 # from then on
+$ hermes sync init
+Herd is set up on desktop.
+  pushed  76 item(s): config, env, memory:agent, memory:user, file:soul,
+          and 71 skills
+  Your recovery code — copy it to every machine you want in the herd:
+    HERD-…
+
+$ hermes sync join ~/herd-store --code HERD-…
+Joined the herd as laptop.  pulled 76 item(s).
 ```
 
-## Why this exists
+That is the whole setup. From then on it pulls when a session starts and pushes when it ends: the hook returns in about 10 ms and the work finishes in the background, at most once every two minutes.
 
-Hermes gets better the longer you use it: memory accumulates, skills get sharper, your config becomes exactly yours. All of that lives in `~/.hermes` on one computer. Move to a laptop and the agent you spent months shaping is gone — so most people quietly stop using the second machine.
+## What moves
 
-The obvious fix, syncing the folder, breaks the second machine in four ways:
-
-| What breaks | Why |
+| | |
 |---|---|
-| The config | `config.yaml` is 31 sections and roughly half are machine-bound: Docker paths, the webapp port, bot tokens, `auth.*`. Copy it and the laptop runs commands against the desktop's Docker socket. |
-| The keys | Skip `.env` and you retype every API key. Sync it in git and you leak them — one published tool's author reported exactly that: *"it read the .env file and posted the contents to slack."* |
-| The skills | A macOS-only skill arrives on Linux and loads as broken. |
-| The edits | Two machines edit different keys; the last file write wins and one edit disappears. |
+| **Follows you** | model and provider, display, agent behaviour, skills, memory (`MEMORY.md`, `USER.md`), `SOUL.md`, and the API keys that aren't machine-specific |
+| **Stays put** | `terminal.backend`, `terminal.cwd`, Docker and container settings, `database.*`, `webapp.*`, `browser.*`, `auth.*`, `updates.*`, bot config, and machine env vars (`PATH`, `DISPLAY`, `HERMES_DASHBOARD_*`, `TELEGRAM_BOT_TOKEN`) |
+| **Never** | `state.db` and sessions — SQLite with a write-ahead log is not a file to sync. Cron is opt-in, because a job on three machines runs three times |
 
-Herd models the thing file sync can't: **which parts of your Hermes belong to the machine, and which belong to you.**
+The rules are data, not code: `hermes sync policy` prints them, and each is one line in `plugin-data/herd/policy.yaml`.
 
-## What moves, what stays
+## Why copying the folder fails
 
-**Follows you:** model and provider, display, agent behaviour, skills (platform-checked), memory (`MEMORY.md`, `USER.md`), `SOUL.md`, and the API keys in `.env` that aren't machine-specific.
+- **A quarter of your config isn't portable.** 37 of 155 keys are machine-bound across 12 sections. Copy them and the laptop runs commands in the desktop's Docker socket.
+- **Secrets are all or nothing.** Skip `.env` and you retype every key. Put it in git and you leak them — a published sync tool's author reported exactly that: *"it read the .env file and posted the contents to slack."*
+- **Skills are platform-specific.** Of the 75 skills on this machine, 4 are macOS-only. They are skipped, not installed broken.
+- **Two edits collide.** File sync keeps the last write. Herd keeps both values and tells you.
 
-**Stays put:** `terminal.backend`, `terminal.cwd`, Docker and container settings, `database.*`, `webapp.*`, `browser.*`, `auth.*`, `updates.*`, per-platform bot config, and machine env vars (`PATH`, `DISPLAY`, `HERMES_DASHBOARD_*`). The full list is `hermes sync policy`, and every entry is one line in `~/.hermes/plugin-data/herd/policy.yaml`.
+The longer argument, with the measured numbers: [`docs/PROBLEM.md`](docs/PROBLEM.md).
 
-**Never:** `state.db` and sessions. SQLite with a write-ahead log is not a file to sync, and pretending otherwise corrupts history. Cron jobs are off by default, because a job that runs on three machines runs three times.
+## Security
 
-## Security model
-
-- **Encrypted end to end.** One 32-byte key per store, stretched with scrypt, used for AES-256-GCM. The store holds ciphertext; a plain folder in Dropbox leaks nothing.
-- **Names are keyed hashes.** Objects are addressed by `HMAC(key, plaintext)`, so the store can't even be probed by hashing guesses at a known setting.
-- **One recovery code.** Printed once by `hermes sync init`, reprintable with `hermes sync code`. It decrypts everything, so keep it in a password manager. There is no reset.
-- **Backups before writes.** Each pull snapshots what it is about to touch into `plugin-data/herd/backups/`; `hermes sync undo` restores the newest.
-- **No network of ours.** The store is a folder you choose. Point it at git and Herd commits and pushes; nothing talks to a service we run.
+- **Encrypted end to end.** One 32-byte key, stretched with scrypt, used for AES-256-GCM. The store holds ciphertext — a folder in Dropbox leaks nothing.
+- **Names are keyed hashes.** Objects are addressed by `HMAC(key, plaintext)`, so the store can't be probed by hashing guesses at a known setting.
+- **One recovery code.** Printed by `init`, reprintable with `hermes sync code`. It decrypts everything and cannot be reset — keep it in a password manager.
 
 ## Commands
 
-| Command | What it does |
+| | |
 |---|---|
-| `hermes sync init [--store PATH] [--remote URL]` | Create a store, publish this machine, print the recovery code |
-| `hermes sync join <store> --code <code>` | Attach this machine and take the store's state |
+| `hermes sync init [--store PATH] [--remote URL]` | Create a store, publish this machine, print the code |
+| `hermes sync join <store> --code …` | Attach a second machine |
 | `hermes sync` | Pull and push in the safe order |
-| `hermes sync status` | What's in sync, what differs, which devices exist |
-| `hermes sync diff` | What a sync would do, without doing it |
-| `hermes sync push` / `pull` | One direction |
+| `hermes sync status` / `diff` | What's in sync; what a sync would do |
 | `hermes sync conflicts` | Values kept over the store's, both sides shown |
-| `hermes sync undo` | Restore files from the last pull's backup |
-| `hermes sync policy` | Exactly what does and does not move |
-| `hermes sync code` | Print the recovery code |
-| `hermes sync leave` | Stop syncing; local files untouched |
+| `hermes sync undo` | Restore the files from the last pull |
+| `hermes sync policy` / `code` / `leave` | The rules; the recovery code; stop syncing |
 
 The agent gets three tools with the same verbs: `sync_status`, `sync_diff`, `sync_now`.
 
 ## How it works
 
-Each device writes exactly one manifest, `devices/<device>.json`, so two machines pushing at once can never clobber each other — git merges two different files. Items are content-addressed and encrypted; an item's version is a Lamport counter (higher wins, device id breaks ties).
+Each device writes exactly one manifest, `devices/<device>.json`, so two machines pushing at once cannot clobber each other. Items are content-addressed and encrypted; versions are Lamport counters, with the device id breaking ties.
 
-`config.yaml` is merged **per key** with a stored base snapshot:
+`config.yaml` is merged per key against a stored base:
 
 ```
 local == remote   keep it
-local == base     take remote      (only they changed it)
-remote == base    keep local       (only you changed it)
-all three differ  keep local, record both values in `hermes sync conflicts`
+local == base     take remote      only they changed it
+remote == base    keep local       only you changed it
+all three differ  keep local, record both in `hermes sync conflicts`
 ```
 
-Device-local paths are never even candidates: they resolve to the local value before the comparison, including when the remote payload doesn't contain them at all. A pull therefore can't delete the section your machine is running on.
+Machine-bound paths are resolved to the local value before that comparison — including when the remote payload doesn't contain them at all, which is why a pull can't delete the section your machine is running on.
 
-Skills move as deterministic tarballs (gzip mtime pinned to zero) and carry their `platforms:` frontmatter; an item that doesn't list the target OS is skipped instead of installed broken.
+## Limits
 
-## Install
+- Sessions don't sync. Deliberate, see the table above.
+- Losing the recovery code loses the store. That is the cost of having no custodian.
+- A genuine conflict is shown, not guessed.
+- Transport today is a folder or git. Nostr is the next backend: same interface, keypair identity, no vendor.
 
-```bash
-git clone https://github.com/<you>/herd ~/.hermes/plugins/herd
-hermes plugins enable herd
-```
+## Docs
 
-Requires Hermes 0.23+ and `git` only if you use a git-backed store.
+- [`docs/PROBLEM.md`](docs/PROBLEM.md) — what this solves and why it matters for Hermes
+- [`docs/AUDIT.md`](docs/AUDIT.md) — every claim above, mapped to the test that proves it
+- [`docs/DEMO.md`](docs/DEMO.md) — the 90-second demo script
 
-## Limits, stated plainly
-
-- **Sessions don't sync.** Deliberate, see above.
-- **Losing the recovery code loses the store.** That is the cost of having no custodian.
-- **A genuine conflict is shown, not guessed.** Herd keeps your value on this machine and tells you what the other side had.
-- **Transport today is a folder or git.** Nostr is next: same store interface, keypair identity, no vendor.
+MIT.

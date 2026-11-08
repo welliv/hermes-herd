@@ -15,9 +15,12 @@ Every claim in the README, checked against a test or a live run. If a claim has 
 | Every pull is restorable | `test_pull_leaves_a_backup_that_undo_restores`; live: `hermes sync undo` restored `terminal`/`webapp` after a bad merge |
 | Packs are byte-identical across machines | `test_dir_packing_is_deterministic` (gzip mtime pinned to zero) |
 | Status is read-only | `test_dry_run_status_does_not_write_objects` |
+| Gateway bot tokens never travel | `test_gateway_tokens_stay_put` — found live, when a first join pulled `TELEGRAM_BOT_TOKEN` |
+| Each agent tool is exercised | `test_tools.py` — status, diff, both sync directions, and three handlers that must return rather than raise |
 | Two devices cannot clobber each other's manifests | `test_git_transport_clones_to_a_second_machine`; per-device manifest files by construction |
 | Fast enough to run on session start | live: 76 items / 1.2 MB packed — scan 0.50 s, push 0.60 s, status 0.60 s on this machine's real skills (57 MB on disk) |
 | The plugin is loadable and honest about itself | `hermes plugins validate .` — all checks pass, security scan **safe**, declared tools and hooks match registrations |
+| The whole suite is green | `python -m pytest tests -q` → **48 passed** |
 
 ## What the vision promises that the build does not do yet
 

@@ -23,7 +23,7 @@ Measured on a real install (this one, 2026-11-07):
 | Top-level config sections | 31 |
 | Leaf keys | 155 |
 | Keys that are machine-bound | **37 (24%), spread across 12 sections** |
-| Skills | 75, 57 MB on disk → ~1.2 MB packed |
+| Skills | 75, 57 MB on disk → 71 syncable (4 are macOS-only) → 1.2 MB packed |
 
 A quarter of a real config cannot be copied without breaking something. That is the structural reason a checkbox in a sync tool cannot work.
 
