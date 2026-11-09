@@ -80,8 +80,11 @@ The longer argument, with the measured numbers: [`docs/PROBLEM.md`](docs/PROBLEM
 - **Encrypted end to end.** One 32-byte key, stretched with scrypt, used for AES-256-GCM. The store holds ciphertext — a folder in Dropbox leaks nothing.
 - **Names are keyed hashes.** Objects are addressed by `HMAC(key, plaintext)`, so the store can't be probed by hashing guesses at a known setting.
 - **One recovery code.** Printed by `init`, reprintable with `hermes sync code`. It decrypts everything and cannot be reset — keep it in a password manager.
+- **Every payload names itself.** An object carries the item id and kind it was sealed for, so a manifest cannot point the config item at the secrets blob, and a repeated object cannot be replayed as another item.
 - **Credentials are opt-in.** Until you run `hermes sync secrets on`, nothing reads `.env` on either side: the file is not opened, and a peer's keys are left in the store untouched.
 - **A peer cannot widen your rules.** The skip list binds in both directions: a key this machine excludes is neither sent nor accepted, a key name has to be a plain environment name before it can become a line, and a key an administrator pinned is left to the administrator. Every `.env` write goes through Hermes's own name check and refusal, then tells Hermes to re-read the file.
+
+A store written by 1.0.2 or earlier holds unsealed objects. 1.0.3 skips them with a message rather than guessing; start a fresh store, or push once from each machine still running the old version.
 
 ## Commands
 

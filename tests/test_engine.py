@@ -69,7 +69,7 @@ def test_scrubbed_config_keeps_machine_keys_out_of_the_store(herd):
     st = store_mod.open_store(herd["store"])
     key = st.unlock(herd["code"])
     merged = st.merged()
-    payload = st.get(key, merged["config"].oid)
+    _iid, _kind, payload = items.open_item(st.get(key, merged["config"].oid))
     conf = json.loads(payload)
     assert conf["model"]["default"] == "deepseek-v4-flash"
     assert "webapp" not in conf
@@ -80,7 +80,8 @@ def test_scrubbed_config_keeps_machine_keys_out_of_the_store(herd):
 def test_secrets_are_synced_but_machine_vars_are_not(herd):
     st = store_mod.open_store(herd["store"])
     key = st.unlock(herd["code"])
-    env = json.loads(st.get(key, st.merged()["env"].oid))
+    _iid, _kind, _body = items.open_item(st.get(key, st.merged()["env"].oid))
+    env = json.loads(_body)
     assert env["DEEPSEEK_API_KEY"] == "sk-aaa"
     assert "PATH" not in env
     assert "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD" not in env
@@ -368,7 +369,7 @@ def test_secrets_command_turns_it_on(tmp_path):
     key = st.unlock(engine.open_context(home).identity["code"])
     merged = st.merged()
     assert "env" in merged
-    assert json.loads(st.get(key, merged["env"].oid))["DEEPSEEK_API_KEY"] == "sk-aaa"
+    assert json.loads(items.open_item(st.get(key, merged["env"].oid))[2])["DEEPSEEK_API_KEY"] == "sk-aaa"
 
 
 # --- the .env codec has to survive a round trip ------------------------------

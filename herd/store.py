@@ -41,6 +41,11 @@ class Entry:
     mtime: float = 0.0
     size: int = 0
     deleted: bool = False
+    # The entry this change was made on top of. It is what tells a fast-forward
+    # ("they built on what I published") from a real disagreement ("we both
+    # started from the same older value").
+    parent_rev: int = 0
+    parent_dev: str = ""
 
     def to_json(self) -> dict:
         return {
@@ -50,6 +55,8 @@ class Entry:
             "mtime": self.mtime,
             "size": self.size,
             "deleted": self.deleted,
+            "parent_rev": self.parent_rev,
+            "parent_dev": self.parent_dev,
         }
 
     @property
@@ -211,6 +218,8 @@ class Store:
                         mtime=float(raw.get("mtime") or 0),
                         size=int(raw.get("size") or 0),
                         deleted=bool(raw.get("deleted")),
+                        parent_rev=int(raw.get("parent_rev") or 0),
+                        parent_dev=str(raw.get("parent_dev") or ""),
                     )
                 except (TypeError, ValueError):
                     continue

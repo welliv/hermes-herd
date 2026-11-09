@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -24,15 +25,51 @@ from .util import atomic_write, file_lock, human_age, iso, now, read_json, write
 PLUGIN_ID = "herd"
 STATE_VERSION = 1
 
+# The only item ids that may name a file on disk. Anything else is either an
+# unknown kind or a path someone made up, and both are refused.
+FILE_TARGETS = {"file:soul": "SOUL.md", "file:cron": "cron/jobs.json"}
+_SKILL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def _inside(home: Path, target: Path) -> bool:
+    """True when *target* resolves inside *home* (the containment check)."""
+    try:
+        target.resolve().relative_to(home.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _row(entry) -> dict:
+    return {"oid": entry.oid, "rev": entry.rev, "kind": entry.kind, "device": entry.device_id}
+
+
+def _decision(local_oid: str, base_row: dict | None, pushed_row: dict | None, entry) -> str:
+    """same | adopt | conflict, from causality rather than who pushed last."""
+    base_row = base_row or {}
+    pushed_row = pushed_row or {}
+    if local_oid and local_oid == entry.oid:
+        return "same"
+    if local_oid == str(base_row.get("oid") or ""):
+        return "adopt"                       # this side never changed it
+    if local_oid == str(pushed_row.get("oid") or "") and pushed_row.get("rev") and (
+            entry.parent_rev, entry.parent_dev) == (int(pushed_row["rev"]), str(pushed_row.get("device") or "")):
+        return "adopt"                       # they extended exactly what we published
+    return "conflict"
+
+
+def _deletable(item_id: str) -> bool:
+    """Only ids this build knows how to scan may be tombstoned."""
+    return (item_id in FILE_TARGETS or item_id in items_mod.MEMORY_FILES
+            or item_id in ("config", "env") or item_id.startswith("skill:"))
+
 
 def data_dir(home: Path) -> Path:
     """Per-profile, per-machine state. plugin-data survives plugin updates."""
-    try:
-        from plugins.plugin_storage import plugin_data_dir  # type: ignore
-
-        return plugin_data_dir(PLUGIN_ID)
-    except Exception:
-        return home / "plugin-data" / PLUGIN_ID
+    # The caller's home is authoritative. Resolving it through the process keeps
+    # working in a single-profile CLI and breaks in a gateway thread, where the
+    # active profile is not the one this call was given.
+    return Path(home) / "plugin-data" / PLUGIN_ID
 
 
 class HerdError(RuntimeError):
@@ -231,6 +268,8 @@ def join(home: Path, store_path: str, code: str, *, name: str | None = None,
     }
     write_json(data / "state.json", state)
     ctx = open_context(home)
+    ctx.state["first_pull"] = True
+    write_json(ctx.data / "state.json", ctx.state)
     pulled = pull(ctx, prefer="remote")
     pushed = push(ctx)
     return {"ok": True, "store": str(path), "device": ctx.device, "pulled": pulled, "pushed": pushed}
@@ -285,30 +324,53 @@ def push(ctx: Context) -> dict:
             rev = max(clock, int(previous.get("rev") or 0), (my_items[item_id].rev if item_id in my_items else 0),
                       merged[item_id].rev if item_id in merged else 0) + 1
             clock = rev
+            seen = (base.get("items") or {}).get(item_id) or {}
             my_items[item_id] = Entry(item_id=item_id, oid=oid, kind=item.kind, rev=rev,
-                                      device_id=ctx.device["id"], mtime=item.mtime, size=item.size)
+                                      device_id=ctx.device["id"], mtime=item.mtime, size=item.size,
+                                      parent_rev=int(seen.get("rev") or 0),
+                                      parent_dev=str(seen.get("device") or ""))
             changed.append(item_id)
 
-        for item_id in set(base.get("items") or {}) - left:
+        here = items_mod.current_platform()
+        platform_skipped = {
+            f"skill:{name}" for name, path in items_mod.iter_skills(ctx.home).items()
+            if (lambda pl: bool(pl) and here not in pl)(items_mod.skill_platforms(path))
+        }
+        for item_id in set((base.get("pushed") or {})) - left:
+            if item_id in platform_skipped or not _deletable(item_id):
+                # Absent from scan is not the same as deleted: this build may
+                # simply not know the item, or may be the wrong OS for it.
+                continue
+            if not ((base.get("pushed") or {}).get(item_id) or {}).get("oid"):
+                continue  # already tombstoned
             previous = my_items.get(item_id)
-            rev = max(clock, int((base["items"][item_id] or {}).get("rev") or 0),
+            rev = max(clock, int(((base.get("items") or {}).get(item_id) or {}).get("rev") or 0),
                       previous.rev if previous else 0, merged[item_id].rev if item_id in merged else 0) + 1
             clock = rev
+            seen = (base.get("items") or {}).get(item_id) or {}
             my_items[item_id] = Entry(item_id=item_id, oid="", kind=(previous.kind if previous else "file"),
-                                      rev=rev, device_id=ctx.device["id"], deleted=True)
+                                      rev=rev, device_id=ctx.device["id"], deleted=True,
+                                      parent_rev=int(seen.get("rev") or 0),
+                                      parent_dev=str(seen.get("device") or ""))
             removed.append(item_id)
 
         ctx.store.write_device({**ctx.device, "created_at": ctx.device.get("created_at", now())}, my_items, clock)
         published = ctx.store.publish(f"herd: {ctx.device.get('name', 'device')} push {len(changed)} item(s)")
 
-        base_items = dict(base.get("items") or {})
+        # The base is the last state both sides agreed on, not "what I just
+        # wrote". Advancing it here is what turned a three-way merge into
+        # last-writer-wins: the writer's next pull saw local == base and took
+        # the peer's value as "only they changed it".
+        doc = _load_base(ctx)
+        pushed = dict(doc.get("pushed") or {})
         for item_id, entry in my_items.items():
-            base_items[item_id] = {"oid": entry.oid, "rev": entry.rev, "kind": entry.kind}
-        # The merge base must have the same shape as what the store holds: the
-        # config as scrubbed. Storing the live dict here makes every local-only
-        # section look deleted by the remote on the next pull.
-        _save_base(ctx, my_items, items_mod.scrub(_local_dict(local, "config"), ctx.policy),
-                   _local_dict(local, "env"))
+            pushed[item_id] = _row(entry)
+        doc["pushed"] = pushed
+        # `config`/`env` in the base stay the last AGREED snapshot. Writing the
+        # local values here would make the next pull see local == base and take
+        # the peer's value as "only they changed it".
+        doc["saved_at"] = now()
+        write_json(ctx.data / "base.json", doc)
 
         ctx.state["last_push"] = now()
         ctx.state["last_sync"] = now()
@@ -340,6 +402,8 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
         applied, skipped, conflicts, removed = [], [], [], []
         deferred: list[str] = []
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        first = bool(ctx.state.pop("first_pull", False))
+        write_json(ctx.data / "state.json", ctx.state)
 
         local = items_mod.scan(ctx.home, ctx.policy, include_cron=bool(ctx.state.get("sync_cron")))
         for item_id, entry in sorted(merged.items()):
@@ -358,16 +422,31 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
 
             try:
                 payload = ctx.store.get(ctx.key, entry.oid)
-            except (StoreError, crypto.TamperedBlob) as exc:
+                sealed_id, sealed_kind, body = items_mod.open_item(payload)
+            except (StoreError, crypto.TamperedBlob, ValueError) as exc:
                 skipped.append(f"{item_id}: {exc}")
+                continue
+            if sealed_id != item_id or sealed_kind != entry.kind:
+                skipped.append(f"{item_id}: payload belongs to {sealed_id} ({sealed_kind})")
                 continue
 
             if entry.kind == "config":
-                result = _apply_config(ctx, payload, base, local, prefer, stamp)
+                item = local.get("config")
+                local_oid = crypto.object_id(ctx.key, item.payload) if item else ""
+                decision = _decision(local_oid, base_items.get(item_id), (base.get("pushed") or {}).get(item_id), entry)
+                if first and decision == "conflict":
+                    decision = "adopt"
+                if decision == "same":
+                    base_items[item_id] = _row(entry)
+                    base["config"] = json.loads(body.decode()) if body else {}
+                    continue
+                result = _apply_config(ctx, body, base, local, "remote" if decision == "adopt" else "local",
+                                       stamp, report=(decision == "conflict"))
                 conflicts.extend({**c, "item": item_id} for c in result["conflicts"])
                 if result["changed"]:
                     applied.append(item_id)
-                base["config"] = result["remote"]
+                if decision == "adopt":
+                    base["config"] = result["remote"]
             elif entry.kind == "env":
                 if not ctx.policy.sync_secrets:
                     # Nothing to decrypt and nothing to open: secrets are off on
@@ -375,22 +454,46 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                     # picks the item up instead of treating it as current.
                     deferred.append(item_id)
                     continue
-                result = _apply_env(ctx, payload, base, stamp)
+                item = local.get("env")
+                local_oid = crypto.object_id(ctx.key, item.payload) if item else ""
+                decision = _decision(local_oid, base_items.get(item_id), (base.get("pushed") or {}).get(item_id), entry)
+                if first and decision == "conflict":
+                    decision = "adopt"
+                if decision == "same":
+                    base_items[item_id] = _row(entry)
+                    base["env"] = json.loads(body.decode()) if body else {}
+                    continue
+                result = _apply_env(ctx, body, base, stamp,
+                                    prefer="remote" if decision == "adopt" else "local",
+                                    report=(decision == "conflict"))
                 conflicts.extend({**c, "item": item_id} for c in result["conflicts"])
                 if result["changed"]:
                     applied.append(item_id)
-                base["env"] = result["remote"]
+                if decision == "adopt":
+                    base["env"] = result["remote"]
             elif entry.kind == "skill":
+                platforms = items_mod.skill_platforms_from_blob(body)
+                if platforms and items_mod.current_platform() not in platforms:
+                    # Not ours to run. Remember the entry so we do not retry it,
+                    # but never install it and never tombstone it.
+                    base_items[item_id] = _row(entry)
+                    skipped.append(f"{item_id}: for {', '.join(platforms)}")
+                    continue
                 item = local.get(item_id)
                 local_oid = crypto.object_id(ctx.key, item.payload) if item else ""
-                base_oid = (base_items.get(item_id) or {}).get("oid")
-                if item and base_oid and local_oid != base_oid and local_oid != entry.oid:
+                decision = _decision(local_oid, base_items.get(item_id), (base.get("pushed") or {}).get(item_id), entry)
+                if first and decision == "conflict":
+                    decision = "adopt"
+                if decision == "same":
+                    base_items[item_id] = _row(entry)
+                    continue
+                if decision == "conflict":
                     # Both machines edited the same skill. Keep this one, but put
                     # the other side somewhere the user can reach — a skill is a
                     # directory, so "merge" would be a guess.
                     saved = ctx.data / "conflicts" / stamp / f"{item_id.split(':', 1)[1]}.tar.gz"
                     saved.parent.mkdir(parents=True, exist_ok=True)
-                    saved.write_bytes(payload)
+                    saved.write_bytes(body)
                     conflicts.append({
                         "item": item_id,
                         "path": "(entire skill)",
@@ -399,22 +502,51 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                         "kept": "local",
                     })
                 else:
-                    _apply_skill(ctx, item_id, payload, stamp)
-                    applied.append(item_id)
+                    try:
+                        _apply_skill(ctx, item_id, body, stamp)
+                        applied.append(item_id)
+                    except Exception as exc:  # noqa: BLE001 - a bad skill is one item
+                        skipped.append(f"{item_id}: {type(exc).__name__}: {exc}")
             elif entry.kind == "memory":
-                dest = ctx.home / "memories" / items_mod.MEMORY_FILES.get(item_id, "MEMORY.md")
-                _backup_path(ctx, stamp, dest)
-                atomic_write(dest, payload, mode=0o600)
-                applied.append(item_id)
+                name = items_mod.MEMORY_FILES.get(item_id)
+                dest = ctx.home / "memories" / name if name else None
+                if dest is None or not _inside(ctx.home, dest):
+                    skipped.append(f"{item_id}: not a memory file this build knows")
+                    continue
+                item = local.get(item_id)
+                local_oid = crypto.object_id(ctx.key, item.payload) if item else ""
+                decision = _decision(local_oid, base_items.get(item_id), (base.get("pushed") or {}).get(item_id), entry)
+                if first and decision == "conflict":
+                    decision = "adopt"          # a machine joining takes the herd's memory
+                if decision == "same":
+                    base_items[item_id] = _row(entry)
+                    continue
+                if decision == "conflict":
+                    conflicts.append({"item": item_id, "path": item_id,
+                                      "local": "kept this machine's text",
+                                      "remote": "store has another version", "kept": "local"})
+                    base_items[item_id] = _row(entry)
+                    continue
+                try:
+                    _backup_path(ctx, stamp, dest)
+                    atomic_write(dest, body, mode=0o600)
+                    applied.append(item_id)
+                except Exception as exc:  # noqa: BLE001 - one item must not stop the pull
+                    skipped.append(f"{item_id}: {type(exc).__name__}: {exc}")
             elif entry.kind == "file":
-                dest = ctx.home / {"file:soul": "SOUL.md", "file:cron": "cron/jobs.json"}.get(
-                    item_id, item_id.removeprefix("file:")
-                )
-                _backup_path(ctx, stamp, dest)
-                atomic_write(dest, payload, mode=dest.stat().st_mode & 0o777 if dest.exists() else 0o600)
-                applied.append(item_id)
+                name = FILE_TARGETS.get(item_id)
+                dest = ctx.home / name if name else None
+                if dest is None or not _inside(ctx.home, dest):
+                    skipped.append(f"{item_id}: not a file item this build writes")
+                    continue
+                try:
+                    _backup_path(ctx, stamp, dest)
+                    atomic_write(dest, body, mode=dest.stat().st_mode & 0o777 if dest.exists() else 0o600)
+                    applied.append(item_id)
+                except Exception as exc:  # noqa: BLE001
+                    skipped.append(f"{item_id}: {type(exc).__name__}: {exc}")
 
-            base_items[item_id] = {"oid": entry.oid, "rev": entry.rev, "kind": entry.kind}
+            base_items[item_id] = _row(entry)
 
         base_doc = _load_base(ctx)
         base_doc["items"] = base_items
@@ -437,15 +569,14 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
         }
 
 
-def _apply_config(ctx: Context, payload: bytes, base: dict, local: dict, prefer: str, stamp: str) -> dict:
+def _apply_config(ctx: Context, payload: bytes, base: dict, local: dict, prefer: str, stamp: str,
+                  report: bool = True) -> dict:
     remote = json.loads(payload.decode())
     item = local.get("config")
     local_dict = (item.extra.get("live") if item else None) or {}
     local_text = (item.extra.get("text") if item else "") or ""
     base_conf = base.get("config") or {}
 
-    if not base_conf:
-        prefer = "remote"  # first pull on a new device: the store is the source of truth
     result = config_merge.merge(base_conf, local_dict, remote, ctx.policy.is_local_only, prefer=prefer)
     # Conflicts are reported even when the merge changes nothing: "both sides
     # edited this key, you kept yours" is exactly what the person needs to see.
@@ -461,7 +592,8 @@ def _apply_config(ctx: Context, payload: bytes, base: dict, local: dict, prefer:
     return {"changed": True, "conflicts": conflicts, "remote": remote}
 
 
-def _apply_env(ctx: Context, payload: bytes, base: dict, stamp: str) -> dict:
+def _apply_env(ctx: Context, payload: bytes, base: dict, stamp: str, prefer: str = "",
+               report: bool = True) -> dict:
     if not ctx.policy.sync_secrets:
         # Off means off. Nothing here opens `.env`, so a peer's env item has no
         # path into this machine while the person has not asked for it.
@@ -472,7 +604,7 @@ def _apply_env(ctx: Context, payload: bytes, base: dict, stamp: str) -> dict:
     local = {k: v for k, v in items_mod.parse_env(text).items() if ctx.policy.secret_allowed(k)}
     base_env = base.get("env") or {}
     result = config_merge.merge(base_env, local, remote, lambda _p: False,
-                                prefer="remote" if not base_env else "local")
+                                prefer=prefer or ("remote" if not base_env else "local"))
     updates: dict[str, str] = {}
     skipped: list[str] = []
     for key, value in result.merged.items():
@@ -492,17 +624,21 @@ def _apply_env(ctx: Context, payload: bytes, base: dict, stamp: str) -> dict:
             continue
         updates[str(key)] = str(value)
     removals = {k for k in local if k not in updates}
+    found = [c.to_json() for c in result.conflicts if c.path in updates] if report else []
     if updates == local and not removals:
-        return {"changed": False, "conflicts": [], "remote": remote, "skipped": skipped}
+        return {"changed": False, "conflicts": found, "remote": remote, "skipped": skipped}
     rendered = items_mod.render_env(text, updates, removals)
     _backup_path(ctx, stamp, path)
     env_io.write(path, rendered)
-    conflicts = [c.to_json() for c in result.conflicts if c.path in updates]
-    return {"changed": True, "conflicts": conflicts, "remote": remote, "skipped": skipped}
+    return {"changed": True, "conflicts": found, "remote": remote, "skipped": skipped}
 
 
 def _apply_skill(ctx: Context, item_id: str, payload: bytes, stamp: str) -> None:
     name = item_id.split(":", 1)[1]
+    if not _SKILL_NAME.match(name) or name in (".", ".."):
+        raise ValueError(f"unsafe skill name {name!r}")
+    if not _inside(items_mod.skill_root(ctx.home), items_mod.skill_root(ctx.home) / name):
+        raise ValueError(f"skill {name!r} escapes the skills directory")
     existing = items_mod.iter_skills(ctx.home).get(name)
     if existing:
         _backup_path(ctx, stamp, existing)
@@ -595,12 +731,10 @@ def gc(home: Path, keep_days: int = 30, dry_run: bool = False) -> dict:
     ctx = open_context(home)
     cutoff = now() - max(0, int(keep_days)) * 86400
 
+    # References live in the device manifests. The base holds an ancestor oid
+    # for change detection only; nothing fetches it, so it must not pin an
+    # object forever.
     referenced: set[str] = set()
-    base_items = (_load_base(ctx) or {}).get("items") or {}
-    for row in base_items.values():
-        oid = row.get("oid") if isinstance(row, dict) else None
-        if oid:
-            referenced.add(str(oid))
     for path in sorted((ctx.store.root / "devices").glob("*.json")):
         data = read_json(path, {}) or {}
         for row in (data.get("items") or {}).values():
@@ -760,16 +894,12 @@ def _record_conflicts(ctx: Context, found: list[dict]) -> None:
 
 
 def sync(home: Path) -> dict:
-    """Pull first when clean, push first when this device has unsynced edits."""
+    """Merge what the herd has, then publish what this machine has.
+
+    Pull before push, always: pushing first is what hid a disagreement, because
+    the writer overwrote the store before reading it.
+    """
     ctx = open_context(home)
-    base = _load_base(ctx)
-    local = items_mod.scan(ctx.home, ctx.policy, include_cron=bool(ctx.state.get("sync_cron")))
-    dirty = False
-    for item_id, item in local.items():
-        known = (base.get("items") or {}).get(item_id) or {}
-        if not known or known.get("oid") != crypto.object_id(ctx.key, item.payload):
-            dirty = True
-            break
-    first = push(ctx) if dirty else pull(ctx)
-    second = pull(ctx) if dirty else push(ctx)
-    return {"ok": True, "order": "push-then-pull" if dirty else "pull-then-push", "first": first, "second": second}
+    first = pull(ctx)
+    second = push(ctx)
+    return {"ok": True, "order": "pull-then-push", "first": first, "second": second}

@@ -195,6 +195,55 @@ def iter_skills(home: Path) -> dict[str, Path]:
     return found
 
 
+_SEAL = b"HERD1\n"
+
+
+def seal_item(item_id: str, kind: str, body: bytes) -> bytes:
+    """Name the item inside its own payload.
+
+    A sealed blob can then only be applied as the item it was written for: a
+    manifest that points the config item at the env blob fails here instead of
+    writing one kind of file as another.
+    """
+    meta = json.dumps({"id": item_id, "kind": kind}, sort_keys=True, separators=(",", ":")).encode()
+    return _SEAL + meta + b"\n" + body
+
+
+def open_item(blob: bytes) -> tuple[str, str, bytes]:
+    if not blob.startswith(_SEAL):
+        raise ValueError("payload is not sealed by this plugin")
+    meta, _, body = blob[len(_SEAL):].partition(b"\n")
+    info = json.loads(meta.decode())
+    return str(info["id"]), str(info["kind"]), body
+
+
+def skill_platforms_from_blob(blob: bytes) -> list[str]:
+    """Read SKILL.md's platforms: out of the archive without unpacking it."""
+    try:
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
+            member = next((m for m in tar.getmembers() if m.name == "SKILL.md"), None)
+            if member is None:
+                return []
+            text = tar.extractfile(member).read().decode("utf-8", "ignore")
+    except Exception:
+        return []
+    if not text.startswith("---"):
+        return []
+    end = text.find("\n---", 3)
+    if end == -1:
+        return []
+    try:
+        meta = yamlutil.safe_load(text[3:end]) or {}
+    except Exception:
+        return []
+    raw = meta.get("platforms") if isinstance(meta, dict) else None
+    if isinstance(raw, str):
+        raw = [p.strip() for p in raw.split(",")]
+    if not isinstance(raw, list):
+        return []
+    return [str(p).strip().lower() for p in raw if str(p).strip()]
+
+
 def pack_dir(path: Path) -> bytes:
     """Deterministic tar.gz: same content in, same bytes out, on any machine."""
     buf = io.BytesIO()
@@ -301,6 +350,8 @@ def scan(home: Path, policy: Policy, include_cron: bool = False) -> dict[str, Lo
                 item_id="file:cron", kind="file", payload=jobs.read_bytes(), mtime=jobs.stat().st_mtime
             )
 
+    for item in items.values():
+        item.payload = seal_item(item.item_id, item.kind, item.payload)
     return items
 
 
