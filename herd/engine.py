@@ -366,9 +366,13 @@ def push(ctx: Context) -> dict:
         for item_id, entry in my_items.items():
             pushed[item_id] = _row(entry)
         doc["pushed"] = pushed
-        # `config`/`env` in the base stay the last AGREED snapshot. Writing the
-        # local values here would make the next pull see local == base and take
-        # the peer's value as "only they changed it".
+        # Seed the merge ancestor once, on the first push, so a later deletion
+        # can be told from a value this machine never had. It is never rewritten
+        # afterwards: the ancestor only moves when a pull agrees on a value.
+        if not doc.get("config"):
+            doc["config"] = items_mod.scrub(_local_dict(local, "config"), ctx.policy)
+        if not doc.get("env"):
+            doc["env"] = _local_dict(local, "env")
         doc["saved_at"] = now()
         write_json(ctx.data / "base.json", doc)
 
