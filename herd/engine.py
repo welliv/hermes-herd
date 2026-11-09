@@ -50,8 +50,16 @@ def _decision(local_oid: str, base_row: dict | None, pushed_row: dict | None, en
     pushed_row = pushed_row or {}
     if local_oid and local_oid == entry.oid:
         return "same"
+    if base_row.get("rev") and str(entry.oid or "") == str(base_row.get("oid") or ""):
+        return "local"                       # only this side changed it: no conflict
     if local_oid == str(base_row.get("oid") or ""):
-        return "adopt"                       # this side never changed it
+        # Unchanged here. Take theirs only when theirs descends from the entry we
+        # agreed on; a sibling edit must surface as a conflict instead.
+        if not base_row.get("rev"):
+            return "adopt"
+        if (entry.parent_rev, entry.parent_dev) == (int(base_row["rev"]), str(base_row.get("device") or "")):
+            return "adopt"
+        return "conflict"
     if local_oid == str(pushed_row.get("oid") or "") and pushed_row.get("rev") and (
             entry.parent_rev, entry.parent_dev) == (int(pushed_row["rev"]), str(pushed_row.get("device") or "")):
         return "adopt"                       # they extended exactly what we published
@@ -366,6 +374,11 @@ def push(ctx: Context) -> dict:
         for item_id, entry in my_items.items():
             pushed[item_id] = _row(entry)
         doc["pushed"] = pushed
+        base_items = dict(doc.get("items") or {})
+        for item_id, entry in my_items.items():
+            if item_id not in base_items and not entry.deleted:
+                base_items[item_id] = _row(entry)
+        doc["items"] = base_items
         # Seed the merge ancestor once, on the first push, so a later deletion
         # can be told from a value this machine never had. It is never rewritten
         # afterwards: the ancestor only moves when a pull agrees on a value.
@@ -442,7 +455,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 decision = _decision(local_oid, base_items.get(item_id), (base.get("pushed") or {}).get(item_id), entry)
                 if first and decision == "conflict":
                     decision = "adopt"
-                if decision == "same":
+                if decision in ("same", "local"):
                     base_items[item_id] = _row(entry)
                     base["config"] = json.loads(body.decode()) if body else {}
                     continue
@@ -467,7 +480,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 decision = _decision(local_oid, base_items.get(item_id), (base.get("pushed") or {}).get(item_id), entry)
                 if first and decision == "conflict":
                     decision = "adopt"
-                if decision == "same":
+                if decision in ("same", "local"):
                     base_items[item_id] = _row(entry)
                     base["env"] = json.loads(body.decode()) if body else {}
                     continue
@@ -494,7 +507,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 decision = _decision(local_oid, base_items.get(item_id), (base.get("pushed") or {}).get(item_id), entry)
                 if first and decision == "conflict":
                     decision = "adopt"
-                if decision == "same":
+                if decision in ("same", "local"):
                     base_items[item_id] = _row(entry)
                     continue
                 if decision == "conflict":
@@ -528,7 +541,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 decision = _decision(local_oid, base_items.get(item_id), (base.get("pushed") or {}).get(item_id), entry)
                 if first and decision == "conflict":
                     decision = "adopt"          # a machine joining takes the herd's memory
-                if decision == "same":
+                if decision in ("same", "local"):
                     base_items[item_id] = _row(entry)
                     continue
                 if decision == "conflict":

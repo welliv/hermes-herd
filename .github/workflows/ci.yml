@@ -36,5 +36,7 @@ jobs:
         run: python audit/matrix.py
       - name: Randomised histories
         run: python audit/fuzz.py 10 7
+      - name: Deep histories (deletions, secrets)
+        run: python audit/fuzz_deep.py 6 11
       - name: Manifests parse
         run: python scripts/check_manifest.py
