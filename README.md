@@ -2,7 +2,7 @@
 
 Keep one Hermes across every machine.
 
-Settings, skills, memory and API keys follow you between devices. Each machine keeps what belongs to it — its Docker path, its ports, its bot tokens. The store is encrypted before anything leaves the device, and every pull leaves a backup you can undo.
+Settings, skills and memory follow you between devices, and API keys too once you ask for it (`hermes sync secrets on`). Each machine keeps what belongs to it — its Docker path, its ports, its bot tokens. The store is encrypted before anything leaves the device, and every pull leaves a backup you can undo.
 
 > File sync copies `~/.hermes`. Herd understands `config.yaml`.
 
@@ -60,7 +60,7 @@ Hermes 0.23+. Git only if you want a git-backed store.
 
 | | |
 |---|---|
-| **Follows you** | model and provider, display, agent behaviour, skills, memory (`MEMORY.md`, `USER.md`), `SOUL.md`, and the API keys that aren't machine-specific |
+| **Follows you** | model and provider, display, agent behaviour, skills, memory (`MEMORY.md`, `USER.md`), `SOUL.md` — and, only with `hermes sync secrets on`, the API keys that aren't machine-specific |
 | **Stays put** | `terminal.backend`, `terminal.cwd`, Docker and container settings, `database.*`, `webapp.*`, `browser.*`, `auth.*`, `updates.*`, bot config, and machine env vars (`PATH`, `DISPLAY`, `HERMES_DASHBOARD_*`, `TELEGRAM_BOT_TOKEN`) |
 | **Never** | `state.db` and sessions — SQLite with a write-ahead log is not a file to sync. Cron is opt-in, because a job on three machines runs three times |
 
@@ -80,6 +80,7 @@ The longer argument, with the measured numbers: [`docs/PROBLEM.md`](docs/PROBLEM
 - **Encrypted end to end.** One 32-byte key, stretched with scrypt, used for AES-256-GCM. The store holds ciphertext — a folder in Dropbox leaks nothing.
 - **Names are keyed hashes.** Objects are addressed by `HMAC(key, plaintext)`, so the store can't be probed by hashing guesses at a known setting.
 - **One recovery code.** Printed by `init`, reprintable with `hermes sync code`. It decrypts everything and cannot be reset — keep it in a password manager.
+- **Credentials are opt-in.** Until you run `hermes sync secrets on`, nothing reads `.env` on either side: the file is not opened, and a peer's keys are left in the store untouched.
 - **A peer cannot widen your rules.** The skip list binds in both directions: a key this machine excludes is neither sent nor accepted, a key name has to be a plain environment name before it can become a line, and a key an administrator pinned is left to the administrator. Every `.env` write goes through Hermes's own name check and refusal, then tells Hermes to re-read the file.
 
 ## Commands
@@ -90,6 +91,7 @@ The longer argument, with the measured numbers: [`docs/PROBLEM.md`](docs/PROBLEM
 | `hermes sync join <store> --code …` | Attach a second machine |
 | `hermes sync` | Pull and push in the safe order |
 | `hermes sync status` / `diff` | What's in sync; what a sync would do |
+| `hermes sync secrets on` / `off` | Include API keys in sync, or stop (off until you ask) |
 | `hermes sync conflicts` | Values kept over the store's, both sides shown |
 | `hermes sync undo` | Restore the files from the last pull |
 | `hermes sync policy` / `code` / `leave` | The rules; the recovery code; stop syncing |

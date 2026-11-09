@@ -63,7 +63,7 @@ def cmd_init(args) -> int:
             store_path,
             remote=remote,
             name=args.name,
-            sync_secrets=not args.no_secrets,
+            sync_secrets=bool(getattr(args, "sync_secrets", False)),
             include_cron=bool(args.cron),
         )
     except Exception as exc:  # noqa: BLE001 - surfaced to the person, not raised
@@ -86,7 +86,8 @@ def cmd_init(args) -> int:
 def cmd_join(args) -> int:
     home = hermes_home()
     try:
-        result = engine.join(home, args.store, args.code, name=args.name)
+        result = engine.join(home, args.store, args.code, name=args.name,
+                             sync_secrets=bool(getattr(args, "sync_secrets", False)))
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
     if _json(args):
@@ -102,6 +103,24 @@ def cmd_join(args) -> int:
     if adopted:
         _print(f"  adopted {len(adopted)} value(s) from the store: {', '.join(c['path'] for c in adopted)}")
     _print(f"  store   {result['store']}")
+    return 0
+
+
+def cmd_secrets(args) -> int:
+    home = hermes_home()
+    on = args.state == "on"
+    try:
+        result = engine.set_secrets(home, on)
+    except Exception as exc:  # noqa: BLE001
+        return _fail(exc)
+    if _json(args):
+        _dump(result)
+        return 0
+    if on:
+        _print("API keys will be encrypted and synced from now on.")
+        _print("`hermes sync push` sends this machine's keys; `pull` takes the other machines'.")
+    else:
+        _print("API keys stay on this machine. Nothing reads .env while this is off.")
     return 0
 
 
@@ -121,7 +140,7 @@ def cmd_status(args) -> int:
     if state.get("remote"):
         _print(f"remote   {state['remote']}")
     _print(f"last     {state['last_sync_human']}")
-    _print(f"secrets  {'encrypted and synced' if state['secrets'] else 'not synced'}")
+    _print(f"secrets  {'encrypted and synced' if state['secrets'] else 'off (hermes sync secrets on)'}")
     _print()
     if state["items"]:
         width = max(len(r["item"]) for r in state["items"])
@@ -306,7 +325,9 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p.add_argument("--store", help="Folder to use as the store (default: ~/.hermes-sync-store)")
     p.add_argument("--remote", help="Git remote to push the store to (creates the local clone)")
     p.add_argument("--name", help="Name for this device (default: hostname)")
-    p.add_argument("--no-secrets", action="store_true", help="Never sync .env values")
+    p.add_argument("--sync-secrets", action="store_true",
+                   help="Include API keys (off by default; `hermes sync secrets on` later)")
+    p.add_argument("--no-secrets", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--cron", action="store_true", help="Also sync cron jobs (off by default)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_init)
@@ -314,6 +335,8 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p = subs.add_parser("join", help="Join an existing herd on this machine")
     p.add_argument("store", help="Folder, or a git URL to clone")
     p.add_argument("--code", required=True, help="Recovery code from `hermes sync code`")
+    p.add_argument("--sync-secrets", action="store_true",
+                   help="Also take API keys (off by default; `hermes sync secrets on` later)")
     p.add_argument("--name", help="Name for this device (default: hostname)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_join)
@@ -328,6 +351,11 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
         p = subs.add_parser(name, help=help_text)
         p.add_argument("--json", action="store_true")
         p.set_defaults(func=func)
+
+    p = subs.add_parser("secrets", help="Include or exclude API keys from syncing")
+    p.add_argument("state", choices=["on", "off"])
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_secrets)
 
     p = subs.add_parser("conflicts", help="Show values kept over the store's")
     p.add_argument("--json", action="store_true")

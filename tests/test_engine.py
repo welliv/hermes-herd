@@ -55,7 +55,7 @@ def make_home(root: Path, name: str, config: str = CONFIG_A, env: str = ENV_A) -
 def herd(tmp_path):
     a = make_home(tmp_path, "a")
     store = tmp_path / "store"
-    result = engine.init(a, str(store), name="desktop")
+    result = engine.init(a, str(store), name="desktop", sync_secrets=True)
     return {"root": tmp_path, "a": a, "store": store, "code": result["code"], "init": result}
 
 
@@ -100,7 +100,7 @@ webapp:
 """,
         env="OPENAI_API_KEY=sk-bbb\nPATH=/usr/bin\n",
     )
-    engine.join(b, str(herd["store"]), herd["code"], name="laptop")
+    engine.join(b, str(herd["store"]), herd["code"], name="laptop", sync_secrets=True)
     conf = (b / "config.yaml").read_text()
     assert "deepseek-v4-flash" in conf          # shared: store wins
     assert "backend: docker" in conf            # local-only: untouched
@@ -116,7 +116,7 @@ webapp:
 
 def test_round_trip_new_key_travels_back(herd):
     b = make_home(herd["root"], "b")
-    engine.join(b, str(herd["store"]), herd["code"], name="laptop")
+    engine.join(b, str(herd["store"]), herd["code"], name="laptop", sync_secrets=True)
     # B adds a portable setting; A must receive it.
     text = (b / "config.yaml").read_text()
     (b / "config.yaml").write_text(text.replace("display:\n  skin: default", "display:\n  skin: default\nagent:\n  max_turns: 42"))
@@ -127,7 +127,7 @@ def test_round_trip_new_key_travels_back(herd):
 
 def test_same_key_edited_on_both_sides_keeps_local_and_records_it(herd):
     b = make_home(herd["root"], "b")
-    engine.join(b, str(herd["store"]), herd["code"], name="laptop")
+    engine.join(b, str(herd["store"]), herd["code"], name="laptop", sync_secrets=True)
     # Both change display.skin after the join.
     for home, skin in ((herd["a"], "neon"), (b, "mono")):
         text = (home / "config.yaml").read_text().replace("skin: default", f"skin: {skin}")
@@ -148,7 +148,7 @@ def test_remote_config_never_deletes_local_only_sections(herd):
         herd["root"], "b",
         config="model:\n  default: gpt-5\nterminal:\n  backend: docker\n  cwd: /srv/b\nwebapp:\n  port: 9999\n",
     )
-    engine.join(b, str(herd["store"]), herd["code"], name="laptop")
+    engine.join(b, str(herd["store"]), herd["code"], name="laptop", sync_secrets=True)
     (herd["a"] / "config.yaml").write_text(
         (herd["a"] / "config.yaml").read_text().replace("skin: default", "skin: agate")
     )
@@ -163,7 +163,7 @@ def test_remote_config_never_deletes_local_only_sections(herd):
 
 def test_two_edits_to_one_skill_keep_both(herd):
     b = make_home(herd["root"], "b")
-    engine.join(b, str(herd["store"]), herd["code"], name="laptop")
+    engine.join(b, str(herd["store"]), herd["code"], name="laptop", sync_secrets=True)
     for home, line in ((herd["a"], "from desktop"), (b, "from laptop")):
         (home / "skills" / "demo" / "SKILL.md").write_text(
             "---\nname: demo\ndescription: d\n---\n" + line + "\n"
@@ -178,7 +178,7 @@ def test_two_edits_to_one_skill_keep_both(herd):
 
 def test_deleting_a_skill_propagates(herd):
     b = make_home(herd["root"], "b")
-    engine.join(b, str(herd["store"]), herd["code"], name="laptop")
+    engine.join(b, str(herd["store"]), herd["code"], name="laptop", sync_secrets=True)
     assert (b / "skills" / "demo").exists()
     import shutil
 
@@ -190,7 +190,7 @@ def test_deleting_a_skill_propagates(herd):
 
 def test_pull_leaves_a_backup_that_undo_restores(herd):
     b = make_home(herd["root"], "b")
-    engine.join(b, str(herd["store"]), herd["code"], name="laptop")
+    engine.join(b, str(herd["store"]), herd["code"], name="laptop", sync_secrets=True)
     original = (b / "config.yaml").read_text()
     (herd["a"] / "config.yaml").write_text((herd["a"] / "config.yaml").read_text().replace("skin: default", "skin: agate"))
     engine.push(engine.open_context(herd["a"]))
@@ -221,7 +221,7 @@ def test_dry_run_status_does_not_write_objects(herd):
 
 def test_status_counts_after_join(herd):
     b = make_home(herd["root"], "b")
-    engine.join(b, str(herd["store"]), herd["code"], name="laptop")
+    engine.join(b, str(herd["store"]), herd["code"], name="laptop", sync_secrets=True)
     state = engine.status(b)
     assert state["counts"]["differs"] == 0, [r for r in state["items"] if r["state"] != "in-sync"]
     assert state["counts"]["not_local"] == 0
@@ -259,7 +259,7 @@ def test_lock_prevents_two_writers(tmp_path):
 def test_conflicts_disappear_once_the_sides_agree(herd):
     """The conflict list is the state of the last pull, not a history log."""
     b = make_home(herd["root"], "b")
-    engine.join(b, str(herd["store"]), herd["code"], name="laptop")
+    engine.join(b, str(herd["store"]), herd["code"], name="laptop", sync_secrets=True)
     for home, skin in ((herd["a"], "neon"), (b, "mono")):
         text = (home / "config.yaml").read_text().replace("skin: default", f"skin: {skin}")
         (home / "config.yaml").write_text(text)
@@ -328,3 +328,44 @@ def test_env_write_is_announced_to_the_cache(herd, monkeypatch):
     ctx = engine.open_context(herd["a"])
     engine._apply_env(ctx, json.dumps({"NEW_KEY": "v"}).encode(), {}, "cache")
     assert seen == [herd["a"] / ".env"]
+
+
+# --- credentials are opt-in, and "off" means the file is never opened --------
+
+
+def test_secrets_are_off_until_asked(tmp_path):
+    home = make_home(tmp_path, "quiet")
+    result = engine.init(home, str(tmp_path / "store-off"), name="desk")
+    assert result["device"]
+    state = engine.status(home)
+    assert state["secrets"] is False
+    assert "env" not in items.scan(home, engine.open_context(home).policy)
+
+
+def test_off_never_opens_env(herd, monkeypatch):
+    ctx = engine.open_context(herd["a"])
+    ctx.policy.sync_secrets = False
+    real_read = Path.read_text
+
+    def guarded(self, *a, **kw):
+        if str(self).endswith(".env"):
+            raise AssertionError("opened .env while secrets were off")
+        return real_read(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "read_text", guarded)
+    result = engine._apply_env(ctx, json.dumps({"OPENAI_API_KEY": "from-peer"}).encode(), {}, "off")
+    assert result["changed"] is False
+
+
+def test_secrets_command_turns_it_on(tmp_path):
+    home = make_home(tmp_path, "later")
+    engine.init(home, str(tmp_path / "store-later"), name="desk")
+    engine.set_secrets(home, True)
+    ctx = engine.open_context(home)
+    assert ctx.policy.sync_secrets is True
+    engine.push(ctx)
+    st = store_mod.open_store(tmp_path / "store-later")
+    key = st.unlock(engine.open_context(home).identity["code"])
+    merged = st.merged()
+    assert "env" in merged
+    assert json.loads(st.get(key, merged["env"].oid))["DEEPSEEK_API_KEY"] == "sk-aaa"

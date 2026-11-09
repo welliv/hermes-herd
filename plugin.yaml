@@ -1,6 +1,6 @@
 name: herd
 version: 1.0.1
-description: "Keep one Hermes across every machine: settings, skills, memory and API keys follow you between devices. Merges config per key so each machine keeps its own Docker path, ports and tokens; secrets are encrypted before they leave; every sync leaves a restorable backup. Works over any folder (git, Dropbox, iCloud, a USB stick)."
+description: "Keep one Hermes across every machine: settings, skills and memory follow you between devices (API keys too, once you turn that on). Merges config per key so each machine keeps its own Docker path, ports and tokens; secrets are encrypted before they leave; every sync leaves a restorable backup. Works over any folder (git, Dropbox, iCloud, a USB stick)."
 author: "Welliv"
 kind: standalone
 requires_hermes: ">=0.23"

@@ -95,7 +95,7 @@ class Policy:
         self.shared = [str(p) for p in data.get("shared") or []]
         self.secret_skip = list(DEFAULT_SECRET_SKIP) + [str(p) for p in data.get("secret_skip") or []]
         self.skill_skip = list(DEFAULT_SKILL_SKIP) + [str(p) for p in data.get("skip_skills") or []]
-        self.sync_secrets = bool(data.get("sync_secrets", True))
+        self.sync_secrets = bool(data.get("sync_secrets", False))
         self.auto_pull = bool(data.get("auto_pull", True))
         self.auto_push = bool(data.get("auto_push", True))
 
@@ -106,8 +106,12 @@ class Policy:
         return any(_matches(path, p) for p in self.local_only)
 
     def secret_allowed(self, name: str) -> bool:
-        if not self.sync_secrets:
-            return False
+        """True when the skip rules do not exclude *name*.
+
+        Whether secrets travel at all is ``sync_secrets``, a separate switch:
+        a key can be allowed by the rules and still stay put because the person
+        never turned syncing on.
+        """
         return not any(fnmatchcase(name, p) for p in self.secret_skip)
 
     def skill_allowed(self, name: str) -> bool:

@@ -124,7 +124,7 @@ def open_context(home: Path, *, create: bool = False) -> Context:
 
 # ── init / join ──────────────────────────────────────────────────────────────
 def init(home: Path, store_path: str, *, remote: str = "", name: str | None = None,
-         sync_secrets: bool = True, include_cron: bool = False) -> dict:
+         sync_secrets: bool = False, include_cron: bool = False) -> dict:
     """Create a new store (and a new identity) on this machine."""
     home = Path(home)
     data = data_dir(home)
@@ -187,7 +187,8 @@ def init(home: Path, store_path: str, *, remote: str = "", name: str | None = No
     }
 
 
-def join(home: Path, store_path: str, code: str, *, name: str | None = None) -> dict:
+def join(home: Path, store_path: str, code: str, *, name: str | None = None,
+         sync_secrets: bool = False) -> dict:
     """Attach this machine to an existing store and take its state on."""
     home = Path(home)
     data = data_dir(home)
@@ -212,6 +213,7 @@ def join(home: Path, store_path: str, code: str, *, name: str | None = None) -> 
     write_json(data / "identity.json", ident)
 
     policy = Policy.load(data / "policy.yaml")
+    policy.sync_secrets = bool(sync_secrets)
     policy.save(data / "policy.yaml")
 
     state = {
@@ -335,6 +337,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
         merged = ctx.store.merged()
         base_items = dict(base.get("items") or {})
         applied, skipped, conflicts, removed = [], [], [], []
+        deferred: list[str] = []
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
 
         local = items_mod.scan(ctx.home, ctx.policy, include_cron=bool(ctx.state.get("sync_cron")))
@@ -365,6 +368,12 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                     applied.append(item_id)
                 base["config"] = result["remote"]
             elif entry.kind == "env":
+                if not ctx.policy.sync_secrets:
+                    # Nothing to decrypt and nothing to open: secrets are off on
+                    # this machine. Left out of the base, so enabling them later
+                    # picks the item up instead of treating it as current.
+                    deferred.append(item_id)
+                    continue
                 result = _apply_env(ctx, payload, base, stamp)
                 conflicts.extend({**c, "item": item_id} for c in result["conflicts"])
                 if result["changed"]:
@@ -421,6 +430,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
             "applied": applied,
             "removed": removed,
             "already_current": len(skipped),
+            "deferred": deferred,
             "conflicts": conflicts,
             "backup": str(ctx.data / "backups" / stamp) if applied or removed else None,
         }
@@ -451,6 +461,10 @@ def _apply_config(ctx: Context, payload: bytes, base: dict, local: dict, prefer:
 
 
 def _apply_env(ctx: Context, payload: bytes, base: dict, stamp: str) -> dict:
+    if not ctx.policy.sync_secrets:
+        # Off means off. Nothing here opens `.env`, so a peer's env item has no
+        # path into this machine while the person has not asked for it.
+        return {"changed": False, "conflicts": [], "remote": base.get("env") or {}, "skipped": []}
     remote = json.loads(payload.decode())
     path = ctx.home / ".env"
     text = path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
@@ -564,6 +578,15 @@ def undo(home: Path) -> dict:
 
 
 # ── status / diff ────────────────────────────────────────────────────────────
+def set_secrets(home: Path, on: bool) -> dict:
+    """Turn credential sync on or off for this machine, and persist the answer."""
+    data = data_dir(home)
+    ctx = open_context(home)
+    ctx.policy.sync_secrets = bool(on)
+    ctx.policy.save(data / "policy.yaml")
+    return {"ok": True, "secrets": bool(on), "policy": str(data / "policy.yaml")}
+
+
 def status(home: Path) -> dict:
     ctx = open_context(home)
     ctx.store.refresh()
