@@ -32,5 +32,9 @@ jobs:
           python -m pip install cryptography ruamel.yaml pytest
       - name: Unit + end-to-end tests
         run: python -m pytest tests -q
+      - name: Audit matrix
+        run: python audit/matrix.py
+      - name: Randomised histories
+        run: python audit/fuzz.py 10 7
       - name: Manifests parse
         run: python scripts/check_manifest.py
