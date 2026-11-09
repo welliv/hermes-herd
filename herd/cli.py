@@ -106,6 +106,23 @@ def cmd_join(args) -> int:
     return 0
 
 
+def cmd_gc(args) -> int:
+    try:
+        result = engine.gc(hermes_home(), keep_days=args.keep_days, dry_run=args.dry_run)
+    except Exception as exc:  # noqa: BLE001
+        return _fail(exc)
+    if _json(args):
+        _dump(result)
+        return 0
+    verb = "Would remove" if result["dry_run"] else "Removed"
+    _print(f"{verb} {result['objects_removed']} unused object(s), "
+           f"{result['bytes_freed'] // 1024} KB freed; {result['objects_kept']} still referenced.")
+    if result["folders_removed"]:
+        _print(f"  {result['folders_removed']} backup or conflict folder(s) older than "
+               f"{result['keep_days']} days")
+    return 0
+
+
 def cmd_secrets(args) -> int:
     home = hermes_home()
     on = args.state == "on"
@@ -141,6 +158,8 @@ def cmd_status(args) -> int:
         _print(f"remote   {state['remote']}")
     _print(f"last     {state['last_sync_human']}")
     _print(f"secrets  {'encrypted and synced' if state['secrets'] else 'off (hermes sync secrets on)'}")
+    if state.get("conflicts"):
+        _print(f"kept     {state['conflicts']} value(s) where both sides differed — `hermes sync conflicts`")
     _print()
     if state["items"]:
         width = max(len(r["item"]) for r in state["items"])
@@ -351,6 +370,13 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
         p = subs.add_parser(name, help=help_text)
         p.add_argument("--json", action="store_true")
         p.set_defaults(func=func)
+
+    p = subs.add_parser("gc", help="Drop store objects no device references any more")
+    p.add_argument("--keep-days", type=int, default=30,
+                   help="Leave anything younger than this alone (default: 30)")
+    p.add_argument("--dry-run", action="store_true", help="Report without deleting")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_gc)
 
     p = subs.add_parser("secrets", help="Include or exclude API keys from syncing")
     p.add_argument("state", choices=["on", "off"])

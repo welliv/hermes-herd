@@ -92,6 +92,7 @@ The longer argument, with the measured numbers: [`docs/PROBLEM.md`](docs/PROBLEM
 | `hermes sync` | Pull and push in the safe order |
 | `hermes sync status` / `diff` | What's in sync; what a sync would do |
 | `hermes sync secrets on` / `off` | Include API keys in sync, or stop (off until you ask) |
+| `hermes sync gc [--dry-run]` | Delete store objects nothing references any more |
 | `hermes sync conflicts` | Values kept over the store's, both sides shown |
 | `hermes sync undo` | Restore the files from the last pull |
 | `hermes sync policy` / `code` / `leave` | The rules; the recovery code; stop syncing |
@@ -118,6 +119,7 @@ Machine-bound paths are resolved to the local value before that comparison — i
 - Sessions don't sync. Deliberate, see the table above.
 - Losing the recovery code loses the store. That is the cost of having no custodian.
 - A genuine conflict is shown, not guessed.
+- The store keeps every version it ever wrote; `hermes sync gc` prunes what nothing references, and old backups and conflict archives with it.
 - Transport today is a folder or git. Nostr is the next backend: same interface, keypair identity, no vendor.
 
 ## Docs

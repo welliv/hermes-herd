@@ -6,6 +6,7 @@ can be exercised in one process during tests, instead of only in production.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -583,6 +584,60 @@ def undo(home: Path) -> dict:
 
 
 # ── status / diff ────────────────────────────────────────────────────────────
+def gc(home: Path, keep_days: int = 30, dry_run: bool = False) -> dict:
+    """Drop objects no device references, and old backups, from this machine's view.
+
+    Only objects older than *keep_days* are candidates: a device that wrote a
+    blob and crashed before writing its manifest leaves an unreferenced object
+    that is still live, so age is the only safe signal. Referenced objects are
+    never touched, and neither is the store's own metadata.
+    """
+    ctx = open_context(home)
+    cutoff = now() - max(0, int(keep_days)) * 86400
+
+    referenced: set[str] = set()
+    base_items = (_load_base(ctx) or {}).get("items") or {}
+    for row in base_items.values():
+        oid = row.get("oid") if isinstance(row, dict) else None
+        if oid:
+            referenced.add(str(oid))
+    for path in sorted((ctx.store.root / "devices").glob("*.json")):
+        data = read_json(path, {}) or {}
+        for row in (data.get("items") or {}).values():
+            oid = (row or {}).get("oid") if isinstance(row, dict) else None
+            if oid:
+                referenced.add(str(oid))
+
+    victims = [p for oid, p, mtime in ctx.store.objects()
+               if oid not in referenced and mtime < cutoff]
+    freed = sum(p.stat().st_size for p in victims if p.exists())
+    if not dry_run:
+        for path in victims:
+            with contextlib.suppress(OSError):
+                path.unlink()
+
+    stale_dirs = []
+    for folder in (ctx.data / "backups", ctx.data / "conflicts"):
+        if not folder.exists():
+            continue
+        for child in folder.iterdir():
+            if child.is_dir() and child.stat().st_mtime < cutoff:
+                stale_dirs.append(child)
+    if not dry_run:
+        for child in stale_dirs:
+            shutil.rmtree(child, ignore_errors=True)
+
+    return {
+        "ok": True,
+        "dry_run": bool(dry_run),
+        "keep_days": int(keep_days),
+        "objects_removed": len(victims),
+        "objects_kept": len(referenced),
+        "bytes_freed": freed,
+        "folders_removed": len(stale_dirs),
+    }
+
+
 def set_secrets(home: Path, on: bool) -> dict:
     """Turn credential sync on or off for this machine, and persist the answer."""
     data = data_dir(home)
@@ -641,6 +696,7 @@ def status(home: Path) -> dict:
         "last_sync": ctx.state.get("last_sync"),
         "last_sync_human": human_age(ctx.state.get("last_sync") or 0),
         "secrets": ctx.policy.sync_secrets,
+        "conflicts": len((read_json(ctx.data / "conflicts.json", {}) or {}).get("entries") or []),
         "items": rows,
         "counts": {
             "in_sync": sum(1 for r in rows if r["state"] == "in-sync"),

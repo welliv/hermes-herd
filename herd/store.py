@@ -151,6 +151,20 @@ class Store:
             ) from exc
         return crypto.open_sealed(key, blob, self.store_id)
 
+    def objects(self) -> list[tuple[str, Path, float]]:
+        """Every sealed object as ``(oid, path, mtime)`` — for housekeeping only."""
+        out: list[tuple[str, Path, float]] = []
+        root = self.root / "objects"
+        if not root.exists():
+            return out
+        for path in root.glob("*/*"):
+            if path.is_file():
+                try:
+                    out.append((path.name, path, path.stat().st_mtime))
+                except OSError:
+                    continue
+        return out
+
     # ── manifests ────────────────────────────────────────────────────────────
     def device_path(self, device_id: str) -> Path:
         return self.root / "devices" / f"{device_id}.json"

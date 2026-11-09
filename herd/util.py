@@ -18,13 +18,18 @@ except Exception:  # pragma: no cover - exercised outside Hermes
 
 
 def hermes_home() -> Path:
-    """Resolve the live Hermes home, preferring Hermes' own resolver."""
-    env = os.environ.get("HERMES_HOME")
-    if env:
-        return Path(env).expanduser().resolve()
+    """Resolve the live Hermes home the way Hermes itself would.
+
+    Hermes' resolver checks a context-local override before ``HERMES_HOME``, so
+    under a gateway routing several profiles it names the profile this turn
+    belongs to. Reading the env var first would sync the launch profile instead.
+    """
     if get_hermes_home is not None:
         with contextlib.suppress(Exception):
             return Path(str(get_hermes_home())).expanduser().resolve()
+    env = os.environ.get("HERMES_HOME")
+    if env:
+        return Path(env).expanduser().resolve()
     return (Path.home() / ".hermes").resolve()
 
 

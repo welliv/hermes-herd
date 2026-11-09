@@ -7,11 +7,20 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} · py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          # The plugin claims macOS and Windows; one interpreter each is enough
+          # to catch path, permission and line-ending assumptions.
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,11 +33,4 @@ jobs:
       - name: Unit + end-to-end tests
         run: python -m pytest tests -q
       - name: Manifests parse
-        run: |
-          python - <<'PY'
-          from ruamel.yaml import YAML
-          doc = YAML(typ="safe").load(open("plugin.yaml").read())
-          assert doc["name"] == "herd", doc.get("name")
-          assert doc["provides_tools"], "no tools declared"
-          print("plugin.yaml ok:", doc["name"], doc["version"])
-          PY
+        run: python scripts/check_manifest.py

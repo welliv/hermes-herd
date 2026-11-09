@@ -403,3 +403,62 @@ def test_a_value_cannot_carry_a_line_into_env(herd):
     assert before == after
     assert result["changed"] is False
     assert "line break" in result["skipped"][0]
+
+
+# --- housekeeping: the store must not grow forever ---------------------------
+
+
+def test_gc_drops_unreferenced_objects_only(herd):
+    ctx = engine.open_context(herd["a"])
+    (herd["a"] / "config.yaml").write_text(
+        (herd["a"] / "config.yaml").read_text().replace("skin: default", "skin: midnight"))
+    engine.push(ctx)
+    ctx = engine.open_context(herd["a"])
+    before = len(ctx.store.objects())
+    assert before >= 2
+    result = engine.gc(herd["a"], keep_days=0)
+    assert result["objects_removed"] >= 1
+    after = engine.open_context(herd["a"]).store.objects()
+    assert len(after) < before
+    # every object a manifest still names is still there
+    engine.pull(engine.open_context(herd["a"]))
+    engine.push(engine.open_context(herd["a"]))
+
+
+def test_gc_dry_run_keeps_everything(herd):
+    engine.gc(herd["a"], keep_days=0, dry_run=True)
+    ctx = engine.open_context(herd["a"])
+    assert ctx.store.objects()
+    engine.pull(ctx)
+
+
+def test_gc_leaves_young_objects_alone(herd):
+    result = engine.gc(herd["a"], keep_days=7)
+    assert result["objects_removed"] == 0
+
+
+# --- the profile Hermes routed us to is the one we sync ---------------------
+
+
+def test_hermes_resolver_wins_over_the_env_var(monkeypatch, tmp_path):
+    from herd import util
+
+    routed = tmp_path / "routed"
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "launch"))
+    monkeypatch.setattr(util, "get_hermes_home", lambda: routed)
+    assert util.hermes_home() == routed.resolve()
+
+
+# --- the codec, over an alphabet full of trouble ----------------------------
+
+
+def test_env_codec_round_trips_a_hostile_alphabet():
+    import random
+    from herd import items
+
+    alphabet = 'ab #"\'\\\t$=/é漢'
+    rng = random.Random(20261109)
+    for _ in range(400):
+        value = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 12)))
+        text = items.render_env("", {"K": value}, set())
+        assert items.parse_env(text)["K"] == value, (value, text)
