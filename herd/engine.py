@@ -484,6 +484,11 @@ def _apply_env(ctx: Context, payload: bytes, base: dict, stamp: str) -> dict:
         if env_io.refusal(str(key)):
             skipped.append(str(key))
             continue
+        if "\n" in str(value) or "\r" in str(value):
+            # A value cannot carry a line break into `.env` without becoming a
+            # second line, and Hermes's own writer strips them for this reason.
+            skipped.append(f"{key} (contains a line break)")
+            continue
         updates[str(key)] = str(value)
     removals = {k for k in local if k not in updates}
     if updates == local and not removals:

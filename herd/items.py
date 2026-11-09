@@ -98,11 +98,22 @@ def parse_env(text: str) -> dict[str, str]:
         key = key.strip()
         if not key or not key.replace("_", "").isalnum() and not key.isidentifier():
             continue
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-            value = value[1:-1]
-        out[key] = value
+        out[key] = _unquote_env(value.strip())
     return out
+
+
+def _unquote_env(value: str) -> str:
+    """Undo exactly what Hermes's writer quotes: double quotes escape \\" and \\\\."""
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        quoted, out, i = value[1:-1], [], 0
+        while i < len(quoted):
+            escaped = quoted[i] == "\\" and quoted[i + 1:i + 2] in ('"', "\\")
+            out.append(quoted[i + 1] if escaped else quoted[i])
+            i += 2 if escaped else 1
+        return "".join(out)
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1]
+    return value
 
 
 def render_env(text: str, updates: dict[str, str], removals: set[str]) -> str:
@@ -128,9 +139,18 @@ def render_env(text: str, updates: dict[str, str], removals: set[str]) -> str:
 
 
 def _quote_env(value: str) -> str:
-    if value == "" or any(ch in value for ch in " \t#'\"\\$"):
-        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return value
+    """Quote the way Hermes does, so a value written here parses back unchanged.
+
+    Same rule as ``hermes_cli.config._quote_env_value``: any whitespace, ``#`` or
+    a quote character forces double quotes; backslashes and double quotes are
+    escaped inside them.
+    """
+    if value == "":
+        return value
+    if not ("#" in value or '"' in value or "'" in value or any(c.isspace() for c in value)):
+        return value
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"' 
 
 
 # ── skills ───────────────────────────────────────────────────────────────────

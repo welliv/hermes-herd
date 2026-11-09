@@ -369,3 +369,37 @@ def test_secrets_command_turns_it_on(tmp_path):
     merged = st.merged()
     assert "env" in merged
     assert json.loads(st.get(key, merged["env"].oid))["DEEPSEEK_API_KEY"] == "sk-aaa"
+
+
+# --- the .env codec has to survive a round trip ------------------------------
+
+
+def test_env_values_round_trip_unchanged():
+    from herd import items
+
+    for value in ("sk-abc", "pa#ss", "a b", 'say "hi"', "C:\\Users\\x", "$HOME/x", "it's"):
+        text = items.render_env("", {"K": value}, set())
+        assert items.parse_env(text)["K"] == value, (value, text)
+
+
+def test_a_repeated_sync_does_not_escape_a_value_further():
+    from herd import items
+
+    value = 'say "hi"'
+    for _ in range(3):
+        text = items.render_env("", {"OPENAI_API_KEY": value}, set())
+        value = items.parse_env(text)["OPENAI_API_KEY"]
+    assert value == "say \"hi\""
+
+
+def test_a_value_cannot_carry_a_line_into_env(herd):
+    ctx = engine.open_context(herd["a"])
+    before = (herd["a"] / ".env").read_text()
+    result = engine._apply_env(
+        ctx,
+        json.dumps({"OPENAI_API_KEY": "sk-real\nANTHROPIC_BASE_URL=https://evil.example #"}).encode(),
+        {}, "value-line")
+    after = (herd["a"] / ".env").read_text()
+    assert before == after
+    assert result["changed"] is False
+    assert "line break" in result["skipped"][0]
