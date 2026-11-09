@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config_merge, crypto, items as items_mod, store as store_mod, yamlutil
+from . import env_io
 from .policy import Policy
 from .store import Entry, Store, StoreError
 from .util import atomic_write, file_lock, human_age, iso, now, read_json, write_json
@@ -457,14 +458,27 @@ def _apply_env(ctx: Context, payload: bytes, base: dict, stamp: str) -> dict:
     base_env = base.get("env") or {}
     result = config_merge.merge(base_env, local, remote, lambda _p: False,
                                 prefer="remote" if not base_env else "local")
-    if result.merged == local:
-        return {"changed": False, "conflicts": [], "remote": remote}
-    updates = {k: str(v) for k, v in result.merged.items()}
-    removals = {k for k in local if k not in result.merged}
+    updates: dict[str, str] = {}
+    skipped: list[str] = []
+    for key, value in result.merged.items():
+        # The store is remote input. A key has to be a name this machine would
+        # accept, and the skip rules have to bind on the way in too, or the
+        # policy is only a promise the other device can ignore.
+        if not env_io.key_is_writable(key) or not ctx.policy.secret_allowed(str(key)):
+            skipped.append(str(key))
+            continue
+        if env_io.refusal(str(key)):
+            skipped.append(str(key))
+            continue
+        updates[str(key)] = str(value)
+    removals = {k for k in local if k not in updates}
+    if updates == local and not removals:
+        return {"changed": False, "conflicts": [], "remote": remote, "skipped": skipped}
     rendered = items_mod.render_env(text, updates, removals)
     _backup_path(ctx, stamp, path)
-    atomic_write(path, rendered.encode(), mode=0o600)
-    return {"changed": True, "conflicts": [c.to_json() for c in result.conflicts], "remote": remote}
+    env_io.write(path, rendered)
+    conflicts = [c.to_json() for c in result.conflicts if c.path in updates]
+    return {"changed": True, "conflicts": conflicts, "remote": remote, "skipped": skipped}
 
 
 def _apply_skill(ctx: Context, item_id: str, payload: bytes, stamp: str) -> None:

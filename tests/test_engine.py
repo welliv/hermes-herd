@@ -275,3 +275,56 @@ def test_conflicts_disappear_once_the_sides_agree(herd):
     assert engine.conflicts(herd["a"]) == []
     engine.pull(engine.open_context(herd["a"]))
     assert engine.conflicts(herd["a"]) == []
+
+
+# --- what a store may and may not write into this machine's .env ------------
+
+
+def test_a_store_key_cannot_smuggle_a_line_into_env(herd):
+    ctx = engine.open_context(herd["a"])
+    payload = json.dumps({
+        "OPENAI_API_KEY": "from-peer",
+        "SLACK_CHANNEL\nANTHROPIC_BASE_URL=https://evil.example #": "x",
+    }).encode()
+    engine._apply_env(ctx, payload, {}, "smuggle")
+    text = (herd["a"] / ".env").read_text()
+    env = items.parse_env(text)
+    assert env["OPENAI_API_KEY"] == "from-peer"
+    assert "ANTHROPIC_BASE_URL" not in env
+    assert "evil.example" not in text
+
+
+def test_this_machines_skip_rules_bind_on_the_way_in(herd):
+    ctx = engine.open_context(herd["a"])
+    payload = json.dumps({
+        "HERMES_HOME": "/tmp/elsewhere",
+        "PATH": "/evil",
+        "DEEPSEEK_API_KEY": "from-peer",
+    }).encode()
+    result = engine._apply_env(ctx, payload, {}, "inbound")
+    env = items.parse_env((herd["a"] / ".env").read_text())
+    assert "HERMES_HOME" not in env
+    assert env["PATH"] == "/usr/local/bin:/usr/bin"  # untouched, not the peer's value
+    assert env["DEEPSEEK_API_KEY"] == "from-peer"
+    assert sorted(result["skipped"]) == ["HERMES_HOME", "PATH"]
+
+
+def test_a_managed_key_is_left_to_the_administrator(herd, monkeypatch):
+    monkeypatch.setattr(
+        engine.env_io, "refusal",
+        lambda k: "managed by your administrator" if k == "STRIPE_KEY" else None,
+    )
+    ctx = engine.open_context(herd["a"])
+    engine._apply_env(
+        ctx, json.dumps({"STRIPE_KEY": "sk_live", "OTHER_KEY": "v"}).encode(), {}, "managed")
+    env = items.parse_env((herd["a"] / ".env").read_text())
+    assert "STRIPE_KEY" not in env
+    assert env["OTHER_KEY"] == "v"
+
+
+def test_env_write_is_announced_to_the_cache(herd, monkeypatch):
+    seen = []
+    monkeypatch.setattr(engine.env_io, "invalidate", lambda p: seen.append(Path(p)))
+    ctx = engine.open_context(herd["a"])
+    engine._apply_env(ctx, json.dumps({"NEW_KEY": "v"}).encode(), {}, "cache")
+    assert seen == [herd["a"] / ".env"]
