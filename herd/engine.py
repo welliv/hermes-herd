@@ -414,6 +414,8 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 skipped.append(item_id)
                 continue
 
+            record_base = True
+
             if entry.deleted:
                 if _remove_item(ctx, item_id, stamp):
                     removed.append(item_id)
@@ -440,6 +442,8 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                     base_items[item_id] = _row(entry)
                     base["config"] = json.loads(body.decode()) if body else {}
                     continue
+                if decision == "conflict":
+                    record_base = False
                 result = _apply_config(ctx, body, base, local, "remote" if decision == "adopt" else "local",
                                        stamp, report=(decision == "conflict"))
                 conflicts.extend({**c, "item": item_id} for c in result["conflicts"])
@@ -463,6 +467,8 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                     base_items[item_id] = _row(entry)
                     base["env"] = json.loads(body.decode()) if body else {}
                     continue
+                if decision == "conflict":
+                    record_base = False
                 result = _apply_env(ctx, body, base, stamp,
                                     prefer="remote" if decision == "adopt" else "local",
                                     report=(decision == "conflict"))
@@ -522,6 +528,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                     base_items[item_id] = _row(entry)
                     continue
                 if decision == "conflict":
+                    record_base = False
                     conflicts.append({"item": item_id, "path": item_id,
                                       "local": "kept this machine's text",
                                       "remote": "store has another version", "kept": "local"})
@@ -546,7 +553,8 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 except Exception as exc:  # noqa: BLE001
                     skipped.append(f"{item_id}: {type(exc).__name__}: {exc}")
 
-            base_items[item_id] = _row(entry)
+            if record_base:
+                base_items[item_id] = _row(entry)
 
         base_doc = _load_base(ctx)
         base_doc["items"] = base_items
