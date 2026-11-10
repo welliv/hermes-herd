@@ -24,7 +24,7 @@ nohup xfce4-terminal --disable-server --geometry=120x26+60+60 \
 sleep 3
 
 ffmpeg -y -loglevel error -f x11grab -framerate 15 -video_size 1440x900 -i :20 \
-  -t 80 -c:v libx264 -preset veryfast -crf 20 "$OUT"
+  -t 115 -c:v libx264 -preset veryfast -crf 20 "$OUT"
 
 ls -l "$OUT"
 ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT"

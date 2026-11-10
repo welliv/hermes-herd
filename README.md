@@ -8,26 +8,40 @@ Settings, skills and memory follow you between machines; each machine keeps the 
 
 [![Herd: two machines, one Hermes](docs/media/herd-demo.gif)](docs/media/herd-demo.mp4)
 
+*92 seconds, real commands: pairing, the machine-bound split, a conflict settled with one key, keys arriving encrypted, undo.*
+
 ## The short version
 
 | | |
 |---|---|
 | **What it is** | A plugin that keeps one Hermes across your machines — the same model, skills and memory everywhere, each machine keeping its own paths, ports and bot tokens |
 | **What it fixes** | A second machine is a stranger with the same name; copying the folder to fix that moves the first machine's Docker socket and bot token with it |
-| **How it works** | One encrypted store, one recovery code, a per-key merge that knows what belongs to the machine, and a pull at session start / push at session end |
-| **What it costs** | You keep a recovery code. Sessions and cron stay put. A real conflict is shown, not guessed |
+| **How it works** | One encrypted store, one short pairing code, a per-key merge that knows what belongs to the machine, and a pull at session start / push at session end |
+| **What it costs** | You keep the recovery code in a password manager (the pairing code is only for the other machine). Sessions and cron stay put. A real conflict is shown, then one key settles it |
 
-New here? [`PROBLEM.md`](docs/PROBLEM.md) is the case for it, [`COMPARISON.md`](docs/COMPARISON.md) ranks it against every other way to do this, and [`DEMO.md`](docs/DEMO.md) is the 79-second film, shot by shot.
+New here? [`PROBLEM.md`](docs/PROBLEM.md) is the case for it, [`COMPARISON.md`](docs/COMPARISON.md) ranks it against every other way to do this, and [`DEMO.md`](docs/DEMO.md) is the 92-second film, shot by shot.
 
 ## In the wild
 
-**Laptop and a VPS.** You work from the laptop; the VPS runs the always-on agent. Install on both, `init` on the VPS, `join` on the laptop. The laptop answers with the same memory and the same skills, while the VPS keeps its daemon socket and the laptop keeps its own working directory. Edit a skill on the train; it is on the VPS at the next session start.
+**Laptop and a VPS.** You work from the laptop; the VPS runs the always-on agent. Install on both, `hermes sync pair` on the VPS, paste the code on the laptop. The laptop answers with the same memory and the same skills, while the VPS keeps its daemon socket and the laptop keeps its own working directory. Edit a skill on the train; it is on the VPS at the next session start.
 
 **Desktop plus a travel laptop.** The desktop has the big model and the local models; the travel laptop is a thin client. Settings follow, so it is the same agent — but the travel laptop does not inherit a Docker backend it cannot run, and its bot token does not start answering for the desktop.
 
-**A replacement machine.** `join` with the code and the profile comes back in one command: memory, skills, `SOUL.md`, config, and the keys if you turned them on. The values you set again are the ones that belong to the new machine anyway.
+**A replacement machine.** `pair` with the code and the profile comes back in one command: memory, skills, `SOUL.md`, config, and the keys if you turned them on. The values you set again are the ones that belong to the new machine anyway.
 
 The common shape: **you stop choosing which machine to work on.** Every machine is the agent; only the plumbing differs.
+
+And the first ninety seconds are one command that prints one short code, one paste, and a line that tells you it worked:
+
+```
+$ hermes sync pair
+Ready to pair — desktop is the first machine.
+  code   QK7M2-9XPRT-4HWBJ-2M8ZC   (once, 15 minutes)
+
+$ hermes sync pair --code QK7M2-9XPRT-4HWBJ-2M8ZC
+Paired with desktop. This machine is laptop.
+  In sync · 2 machines · synced just now
+```
 
 ## The problem, in numbers
 
@@ -44,7 +58,7 @@ The measured detail, including the four prior attempts that all move files: [`PR
 | Second machine is empty | Retype keys, reinstall skills, re-teach memory | `join` with the code, once |
 | Machine-bound settings | Copied and wrong, or excluded and missing | Resolved to each machine's own value |
 | Secrets | Plaintext in a cloud folder, or never synced | Encrypted before they leave; off until you ask |
-| Simultaneous edits | Last write wins, silently | Both kept, the disagreement recorded, the item frozen until one side agrees |
+| Simultaneous edits | Last write wins, silently | A card in the terminal: `1` keep mine, `2` take theirs — the disagreement is recorded until you choose |
 | A mistake | Restore from a backup you may not have | `hermes sync undo` |
 
 ## How it works
@@ -95,7 +109,7 @@ Machine-bound paths are resolved to the local value *before* that comparison —
 
 | Tool | Machine-bound keys | Secrets | Conflicts | Score |
 |---|---|---|---|---|
-| **Herd** | Modelled per key | Encrypted, opt-in | Kept, recorded, frozen | **83** |
+| **Herd** | Modelled per key | Encrypted, opt-in | Kept, then one key to settle | **89** |
 | Dotfiles + age/SOPS | Hand-written templates | Encrypted in git | Git conflict, by hand | 59 |
 | Syncthing / Dropbox | Copied over each other | Provider-side, plaintext | Conflict copies, `.db` corruption | 51 |
 | Shared home over SSH | One config for all hosts | Stays on the server | None to resolve | 51 |
@@ -110,25 +124,33 @@ Full method, weights and per-tool verdicts — including when *not* to use Herd:
 # both machines
 hermes plugins install welliv/hermes-herd --enable
 
-# first machine
-hermes sync init --store ~/herd-store        # prints one recovery code
+# first machine: creates the herd and prints one short code
+hermes sync pair
 
-# every other machine
-hermes sync join ~/herd-store --code HERD-…
+# every other machine: type the code
+hermes sync pair --code XXXX-XXXX-XXXX-XXXX
 ```
 
 ```
-Herd is set up on desktop.
-  pushed  6 item(s): config, memory:agent, file:soul, skill:research, skill:writer, skill:deploy
-  Your recovery code — copy it to every machine you want in the herd:
-    HERD-…
+Ready to pair — desktop is the first machine.
+  store  /root/herd-store
 
-Joined the herd as laptop.
-  pulled  6 item(s)
-  adopted 1 value(s) from the store: model.default
+  code   QK7M2-9XPRT-4HWBJ-2M8ZC
+         works once, for 15 minutes.
+
+On the other machine, with this store folder reachable:
+  hermes sync pair --code QK7M2-9XPRT-4HWBJ-2M8ZC
 ```
 
-Both machines now run the same agent — same model, same skills, same memory — and the laptop kept its own Docker path and port. Hermes 0.23+. Git only if you want a git-backed store.
+```
+Paired with desktop. This machine is laptop.
+  pulled  6 item(s): config, memory:agent, file:soul, skill:research, skill:writer, skill:deploy
+  In sync · 2 machines · synced just now
+```
+
+The store is a folder: put it in Dropbox/iCloud/Syncthing so both machines see it, or pass `--remote <git-url>` on the first machine — then the second needs only the code and clones it. One code works once, for 15 minutes; the long recovery code still exists for a machine that has the folder but not the code (`hermes sync code`, `hermes sync join`).
+
+Hermes 0.23+.
 
 ## What moves
 
@@ -156,13 +178,14 @@ A store written by 1.0.2 or earlier holds unsealed objects. 1.0.3 skips them wit
 
 | | |
 |---|---|
-| `hermes sync init [--store PATH] [--remote URL]` | Create a store, publish this machine, print the code |
-| `hermes sync join <store> --code …` | Attach a second machine |
+| `hermes sync pair [--store PATH] [--remote URL]` | Create the herd and print one short, single-use code |
+| `hermes sync pair --code …` | Join with that code (clones `--remote` if the store is git) |
+| `hermes sync init` / `join` | The explicit path: choose a store, use the long recovery code |
 | `hermes sync` | Pull, merge, push — the one you type |
 | `hermes sync status` / `diff` | What's in sync; what a sync would do |
 | `hermes sync secrets on` / `off` | Include API keys in sync, or stop (off until you ask) |
 | `hermes sync gc [--dry-run]` | Delete store objects nothing references any more |
-| `hermes sync conflicts` | Where the machines disagree, both values shown |
+| `hermes sync conflicts` | Review disagreements; `--item config --take mine\|theirs` settles one |
 | `hermes sync undo` | Restore the files from the last pull |
 | `hermes sync policy` / `code` / `leave` | The rules; the recovery code; stop syncing |
 
@@ -172,7 +195,7 @@ The agent gets three tools with the same verbs: `sync_status`, `sync_diff`, `syn
 
 - Sessions don't sync, and cron is off by default. Deliberate, see the table above.
 - Losing the recovery code loses the store. That is the cost of having no custodian.
-- A genuine conflict is shown, not guessed — and resolved by an edit, not a button (yet).
+- A genuine conflict is shown, not guessed — and settled with one key in the terminal. There is no GUI yet.
 - The store keeps every version it ever wrote; `hermes sync gc` prunes what nothing references, and old backups and conflict archives with it.
 - Transport today is a folder or git. Nostr is the next backend: same interface, keypair identity, no vendor.
 
@@ -186,7 +209,7 @@ No account. No hosted service. No telemetry. It does not back up your sessions, 
 |---|---|
 | [`docs/PROBLEM.md`](docs/PROBLEM.md) | The measured case for per-key sync, and why Hermes needs it |
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | Six ways to do this, weighted and ranked, with when to choose each |
-| [`docs/DEMO.md`](docs/DEMO.md) | The 79-second demo: shot list, timings, how to re-record it |
+| [`docs/DEMO.md`](docs/DEMO.md) | The 92-second demo: shot list, timings, how to re-record it |
 | [`docs/AUDIT.md`](docs/AUDIT.md) | Every claim above, mapped to the test that proves it |
 
 MIT.

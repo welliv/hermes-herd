@@ -106,6 +106,45 @@ def cmd_join(args) -> int:
     return 0
 
 
+def cmd_pair(args) -> int:
+    home = hermes_home()
+    code = (getattr(args, "code", "") or "").strip()
+    try:
+        if code:
+            result = engine.pair_finish(home, code, getattr(args, "store", None),
+                                        name=args.name,
+                                        sync_secrets=bool(getattr(args, "sync_secrets", False)))
+        else:
+            result = engine.pair_start(home, getattr(args, "store", None),
+                                       remote=(getattr(args, "remote", "") or "").strip(),
+                                       name=args.name)
+    except Exception as exc:  # noqa: BLE001
+        return _fail(exc)
+    if _json(args):
+        _dump(result)
+        return 0
+
+    if code:
+        pulled = result["pulled"]
+        _print(f"Paired with {result['paired_with']}. This machine is {result['device']['name']}.")
+        _print(f"  pulled  {len(pulled['applied'])} item(s): {', '.join(pulled['applied']) or '—'}")
+        _print(f"  {engine.summary(home)}")
+        return 0
+
+    minutes = max(1, int(result["expires_in"]) // 60)
+    _print(f"Ready to pair — {result['device']['name']} is the first machine.")
+    _print(f"  store  {result['store']}")
+    _print()
+    _print(f"  code   {result['code']}")
+    _print(f"         works once, for {minutes} minutes.")
+    _print()
+    _print("On the other machine, with this store folder reachable:")
+    _print(f"  hermes sync pair --code {result['code']}")
+    if result.get("remote"):
+        _print(f"  (it will clone {result['remote']})")
+    return 0
+
+
 def cmd_gc(args) -> int:
     try:
         result = engine.gc(hermes_home(), keep_days=args.keep_days, dry_run=args.dry_run)
@@ -153,6 +192,8 @@ def cmd_status(args) -> int:
 
     device = state["device"]
     _print(f"Herd · {device.get('name')} ({device.get('platform')})")
+    _print(engine.summary(home))
+    _print()
     _print(f"store    {state['store']}")
     if state.get("remote"):
         _print(f"remote   {state['remote']}")
@@ -255,25 +296,69 @@ def cmd_sync(args) -> int:
     _print(f"Synced ({result['order']}) — {changed} item change(s).")
     if second.get("conflicts"):
         _print(f"  {len(second['conflicts'])} conflict(s) kept locally; `hermes sync conflicts`")
+    _print(f"  {engine.summary(hermes_home())}")
     return 0
 
 
 def cmd_conflicts(args) -> int:
-    rows = engine.conflicts(hermes_home())
+    home = hermes_home()
+    take = getattr(args, "take", None)
+    if take:
+        item = getattr(args, "item", None)
+        if not item:
+            _print("Herd: name the item, e.g. `hermes sync conflicts --item config --take theirs`",
+                   file=sys.stderr)
+            return 1
+        try:
+            result = engine.resolve(home, item, take)
+        except Exception as exc:  # noqa: BLE001
+            return _fail(exc)
+        if _json(args):
+            _dump(result)
+            return 0
+        _print(f"{item}: kept {'this machine' if take == 'mine' else 'the store'}'s value.")
+        _print(f"  {engine.summary(home)}")
+        return 0
+
+    rows = engine.conflicts(home)
     if _json(args):
         _dump(rows)
         return 0
     if not rows:
         _print("No conflicts recorded.")
         return 0
-    for row in rows:
-        _print(f"{row.get('item','?')} · {row.get('path','?')}")
-        if row.get("kept") == "remote":
-            _print(f"  took    {json.dumps(row.get('remote'))[:160]}  (store)")
-            _print(f"  over    {json.dumps(row.get('local'))[:160]}  (this machine)")
-        else:
-            _print(f"  kept    {json.dumps(row.get('local'))[:160]}  (this machine)")
-            _print(f"  ignored {json.dumps(row.get('remote'))[:160]}  (store)")
+
+    interactive = sys.stdin.isatty()
+    for index, row in enumerate(rows, 1):
+        item = row.get("item", "?")
+        _print(f"{item} · {row.get('path', '?')}")
+        mine = json.dumps(row.get("local"))
+        theirs = json.dumps(row.get("remote"))
+        _print(f"  1  this machine   {mine[:150]}")
+        _print(f"  2  the store     {theirs[:150]}")
+        if not interactive:
+            _print(f"     resolve: hermes sync conflicts --item {item} --take mine|theirs")
+            continue
+        while True:
+            try:
+                answer = input("  keep which? [1/2/s/q] ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return 0
+            if answer in ("q", "quit"):
+                return 0
+            if answer in ("s", "", "skip"):
+                break
+            choice = {"1": "mine", "2": "theirs", "m": "mine", "t": "theirs"}.get(answer)
+            if not choice:
+                _print("  1, 2, s or q.")
+                continue
+            try:
+                engine.resolve(home, item, choice)
+                _print(f"  kept {'this machine' if choice == 'mine' else 'the store'}'s value.")
+            except Exception as exc:  # noqa: BLE001
+                _fail(exc)
+            break
+    _print(f"  {engine.summary(home)}")
     return 0
 
 
@@ -371,6 +456,16 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
         p.add_argument("--json", action="store_true")
         p.set_defaults(func=func)
 
+    p = subs.add_parser("pair", help="Pair a second machine with a short, single-use code")
+    p.add_argument("store", nargs="?", help="Store folder (default: ~/herd-store)")
+    p.add_argument("--code", help="Pairing code from the machine that already syncs")
+    p.add_argument("--remote", help="Git remote to create the store against (first machine)")
+    p.add_argument("--name", help="Name for this device (default: hostname)")
+    p.add_argument("--sync-secrets", action="store_true",
+                   help="Also take API keys when pairing (off by default)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_pair)
+
     p = subs.add_parser("gc", help="Drop store objects no device references any more")
     p.add_argument("--keep-days", type=int, default=30,
                    help="Leave anything younger than this alone (default: 30)")
@@ -383,7 +478,9 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_secrets)
 
-    p = subs.add_parser("conflicts", help="Show values kept over the store's")
+    p = subs.add_parser("conflicts", help="Review disagreements, or settle one")
+    p.add_argument("--item", help="Item to settle, e.g. config")
+    p.add_argument("--take", choices=["mine", "theirs"], help="Keep this machine's value or the store's")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_conflicts)
 
@@ -409,6 +506,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
 _HANDLERS = {
     "init": cmd_init,
     "join": cmd_join,
+    "pair": cmd_pair,
     "status": cmd_status,
     "diff": cmd_diff,
     "push": cmd_push,
@@ -428,4 +526,13 @@ def sync_command(args) -> int:
     name = str(getattr(args, "sync_command", "") or "")
     # Bare `hermes sync` is the verb, not a status read: that is what the name
     # promises and what someone types when they want their machines to agree.
-    return _HANDLERS.get(name, cmd_sync)(args)
+    try:
+        return _HANDLERS.get(name, cmd_sync)(args)
+    except BrokenPipeError:
+        # `hermes sync status | head` is a normal thing to type. Closing the
+        # pipe is not an error worth a traceback.
+        try:
+            sys.stdout.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return 0

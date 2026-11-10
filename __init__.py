@@ -85,7 +85,7 @@ def register(ctx) -> None:
         handler_fn=sync_command,
         description=(
             "Sync this Hermes with your other machines: per-key config merge, encrypted "
-            "secrets, restorable backups. Start with `hermes sync init`."
+            "secrets, restorable backups. Start with `hermes sync pair`."
         ),
     )
     logger.info("herd plugin loaded")

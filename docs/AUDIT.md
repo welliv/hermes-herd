@@ -3,9 +3,9 @@
 Every claim in the README, checked against a test or a live run. Evidence lives
 here so a claim without one can be deleted rather than believed.
 
-Three suites, all run in CI:
+Five suites, all run in CI:
 
-- `python -m pytest tests -q` — **64 passed** (unit + two-device end-to-end).
+- `python -m pytest tests -q` — **79 passed** (unit, two-device end-to-end, pairing, conflict resolution).
 - `python audit/matrix.py` — **55 checks**: crypto, merge orderings, env, items,
   forged stores, concurrency, surface, cost.
 - `python audit/fuzz.py` — randomised three-device histories: edits, pushes,
@@ -24,6 +24,11 @@ corrupt-store runs.
 
 | Claim | Evidence |
 |---|---|
+| Pairing is one short code, and it works once | `test_the_code_is_twenty_characters_and_typed_once`, `test_a_used_code_does_not_pair_a_third_machine` |
+| A wrong or expired code changes nothing | `test_a_wrong_code_says_so_and_changes_nothing`, `test_an_expired_code_is_refused` |
+| "Take theirs" means the peer's value, not this machine's last push | `test_taking_theirs_after_this_machine_published_its_own_value` |
+| A disagreement is settled, and then it is gone | `test_taking_the_store_value_settles_the_item`, `test_keeping_mine_publishes_it_and_the_other_machine_adopts` |
+| The status line counts live disagreements | `test_summary_names_a_pending_conflict`, `test_joining_with_a_local_setting_takes_the_herd_value_quietly` |
 | A second machine is useful in one command | `test_join_merges_without_breaking_the_new_machine`; matrix `merge/*` |
 | Machine-bound keys never travel | `test_scrubbed_config_keeps_machine_keys_out_of_the_store`; fuzz asserts `webapp.port` never takes a peer value |
 | A pull cannot delete the section the machine is running on | `test_remote_config_never_deletes_local_only_sections` |

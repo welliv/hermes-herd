@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import config_merge, crypto, items as items_mod, store as store_mod, yamlutil
+from . import config_merge, crypto, items as items_mod, pairing, store as store_mod, yamlutil
 from . import env_io
 from .policy import Policy
 from .store import Entry, Store, StoreError
@@ -24,6 +24,7 @@ from .util import atomic_write, file_lock, human_age, iso, now, read_json, write
 
 PLUGIN_ID = "herd"
 STATE_VERSION = 1
+DEFAULT_STORE = "~/herd-store"
 
 # The only item ids that may name a file on disk. Anything else is either an
 # unknown kind or a path someone made up, and both are refused.
@@ -161,7 +162,7 @@ def open_context(home: Path, *, create: bool = False) -> Context:
         if create:
             state = {"version": STATE_VERSION, "device": {}, "created_at": now()}
         else:
-            raise HerdError("This machine is not syncing yet. Run `hermes sync init`.")
+            raise HerdError("This machine is not in a herd yet. Run `hermes sync pair`.")
     ident = _identity(data, state.get("device_name"))
     state["device"] = state.get("device") or {
         "id": ident["device_id"],
@@ -924,7 +925,9 @@ def status(home: Path) -> dict:
         "last_sync": ctx.state.get("last_sync"),
         "last_sync_human": human_age(ctx.state.get("last_sync") or 0),
         "secrets": ctx.policy.sync_secrets,
-        "conflicts": len((read_json(ctx.data / "conflicts.json", {}) or {}).get("entries") or []),
+        # Count what still disagrees, not every row ever written: a pull that
+        # settles an item leaves a row behind until it is forgotten.
+        "conflicts": len(conflicts(home)),
         "items": rows,
         "counts": {
             "in_sync": sum(1 for r in rows if r["state"] == "in-sync"),
@@ -984,6 +987,10 @@ def _record_conflicts(ctx: Context, found: list[dict], resolved: set[str] | None
     path = ctx.data / "conflicts.json"
     stamp = iso()
     resolved = resolved or set()
+    # Only what this machine refused to take is a live disagreement. A key that
+    # was adopted was never a choice, and recording it leaves a row that no
+    # command can show and every count includes.
+    found = [row for row in found if row.get("kept") == "local"]
     previous = [row for row in ((read_json(path, {}) or {}).get("entries") or [])
                 if row.get("item") not in resolved]
     merged: dict[tuple, dict] = {}
@@ -1004,3 +1011,214 @@ def sync(home: Path) -> dict:
     first = pull(ctx)
     second = push(ctx)
     return {"ok": True, "order": "pull-then-push", "first": first, "second": second}
+
+
+# ── pairing ──────────────────────────────────────────────────────────────────
+def pair_start(home: Path, store_path: str | None = None, *, remote: str = "",
+               name: str | None = None, ttl: int = pairing.DEFAULT_TTL) -> dict:
+    """Make a short, single-use code another machine can finish pairing with.
+
+    The store is created if this machine has none, so the first command a person
+    runs does not ask them to choose a folder before they know what it is for.
+    """
+    home = Path(home)
+    if load_state(data_dir(home)).get("store"):
+        ctx = open_context(home)
+    else:
+        target = Path(store_path or DEFAULT_STORE).expanduser()
+        if (target / "store.json").exists():
+            raise HerdError(
+                f"{target} already holds a herd. If it is this one, pair with the code "
+                f"from the machine that made it; otherwise pick another folder:\n"
+                f"  hermes sync pair {target}-2"
+            )
+        init(home, str(target), remote=remote, name=name)
+        ctx = open_context(home)
+
+    code = pairing.new_code()
+    payload = {
+        # The recovery code, not the derived key: the store's salt turns one into
+        # the other, and another machine has to reproduce that derivation itself.
+        "code": ctx.identity.get("code", ""),
+        "store": str(ctx.store.root),
+        "remote": ctx.state.get("remote") or "",
+        "device": ctx.device.get("name") or "",
+    }
+    doc = pairing.seal(code, payload, ctx.store.store_id, ttl=ttl)
+    atomic_write(ctx.store.root / "pairing.json", json.dumps(doc).encode(), mode=0o644)
+    return {
+        "code": code,
+        "store": str(ctx.store.root),
+        "remote": payload["remote"] or None,
+        "device": ctx.device,
+        "expires_in": ttl,
+    }
+
+
+def pair_finish(home: Path, code: str, store_path: str | None = None, *, name: str | None = None,
+                sync_secrets: bool = False) -> dict:
+    """Join with a pairing code instead of the long recovery code."""
+    home = Path(home)
+    path = Path(store_path or DEFAULT_STORE).expanduser()
+    pfile = path / "pairing.json"
+    if not pfile.exists():
+        raise HerdError(
+            f"No pairing code is waiting at {path}.\n"
+            "Run `hermes sync pair` on the machine that already syncs, then pass the "
+            "same store folder here — or use `hermes sync join <store> --code HERD-…` "
+            "with the recovery code."
+        )
+    meta = read_json(path / "store.json", {}) or {}
+    payload = pairing.open_payload(code, read_json(pfile, {}) or {}, str(meta.get("store_id") or ""))
+    target = str(path) if path.exists() else (payload.get("remote") or str(path))
+    joined = join(home, target, str(payload.get("code") or ""), name=name, sync_secrets=sync_secrets)
+    with contextlib.suppress(OSError):
+        pfile.unlink()
+    return {**joined, "paired_with": payload.get("device") or "another machine"}
+
+
+# ── resolving a disagreement ─────────────────────────────────────────────────
+def _forget_conflict(ctx: Context, item_id: str) -> None:
+    frozen = set(ctx.state.get("frozen") or [])
+    if item_id in frozen:
+        frozen.discard(item_id)
+        ctx.state["frozen"] = sorted(frozen)
+        write_json(ctx.data / "state.json", ctx.state)
+    _record_conflicts(ctx, [], resolved={item_id})
+
+
+def _write_config_value(ctx: Context, dotted: str, value) -> None:
+    """Set one dotted key in config.yaml, preserving the rest of the file."""
+    dest = ctx.home / "config.yaml"
+    text = dest.read_text(encoding="utf-8") if dest.exists() else ""
+    data = yamlutil.safe_load(text) or {}
+    node = data
+    parts = [p for p in dotted.split(".") if p]
+    for part in parts[:-1]:
+        nxt = node.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            node[part] = nxt
+        node = nxt
+    if value is None:
+        node.pop(parts[-1], None)
+    else:
+        node[parts[-1]] = value
+    rendered, _ = config_merge.render(text, data)
+    mode = dest.stat().st_mode & 0o777 if dest.exists() else 0o600
+    atomic_write(dest, rendered.encode(), mode=mode)
+
+
+def _write_env_value(ctx: Context, name: str, value) -> None:
+    path = ctx.home / ".env"
+    text = path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
+    if value is None:
+        text = items_mod.render_env(text, {}, {name})
+    else:
+        text = items_mod.render_env(text, {name: str(value)}, set())
+    env_io.write(path, text)
+
+
+def _peer_entry(ctx: Context, item_id: str):
+    """The other machines' newest entry for an item, ignoring our own."""
+    best = None
+    for doc in ctx.store.other_manifests(ctx.device["id"]):
+        raw = (doc.get("items") or {}).get(item_id)
+        if not raw or raw.get("deleted"):
+            continue
+        if best is None or int(raw.get("rev") or 0) > int(best[1].get("rev") or 0):
+            best = (doc, raw)
+    return best
+
+
+def resolve(home: Path, item_id: str, choice: str) -> dict:
+    """Settle one conflict: keep this machine's value, or take the other machine's.
+
+    "Mine" republishes this machine's value; a machine that had not edited the
+    item adopts it on its next pull, and one that had edited it is asked.
+    "Theirs" writes the *peer's* value here — not the store's newest entry,
+    which may be this machine's own from the sync that created the conflict.
+    """
+    if choice not in ("mine", "theirs"):
+        raise HerdError("Choose `mine` or `theirs`.")
+    home = Path(home)
+    ctx = open_context(home)
+    rows = (read_json(ctx.data / "conflicts.json", {}) or {}).get("entries") or []
+    row = next((r for r in rows if r.get("item") == item_id), None)
+    if row is None:
+        raise HerdError(f"No conflict is recorded for {item_id}. `hermes sync conflicts` lists them.")
+
+    if choice == "mine":
+        _forget_conflict(ctx, item_id)
+        report = push(ctx)
+        return {"ok": True, "item": item_id, "choice": "mine", **report}
+
+    applied = "value"
+    if item_id == "config" and row.get("path"):
+        _write_config_value(ctx, str(row["path"]), row.get("remote"))
+    elif item_id == "env" and row.get("path"):
+        _write_env_value(ctx, str(row["path"]), row.get("remote"))
+    else:
+        peer = _peer_entry(ctx, item_id)
+        if peer is None:
+            raise HerdError(
+                f"{item_id} has no other machine's copy in the store — the disagreement is "
+                "about a value this machine holds. Keep yours instead."
+            )
+        _doc, raw = peer
+        body = ctx.store.get(ctx.key, str(raw["oid"]))
+        kind = raw.get("kind") or item_id.split(":")[0]
+        if kind == "skill":
+            _apply_skill(ctx, item_id, body, time.strftime("%Y%m%d-%H%M%S", time.gmtime()))
+        elif kind == "memory":
+            dest = ctx.home / "memories" / ("MEMORY.md" if item_id == "memory:agent" else "USER.md")
+            atomic_write(dest, body, mode=0o600)
+        elif kind == "file" and item_id in FILE_TARGETS:
+            atomic_write(ctx.home / FILE_TARGETS[item_id], body, mode=0o600)
+        else:
+            raise HerdError(f"{item_id} is not a kind this machine can adopt.")
+        applied = "file"
+
+    # The local item now equals what the peer published, so the next push is a
+    # no-op and the base can record agreement.
+    base = _load_base(ctx)
+    local = items_mod.scan(ctx.home, ctx.policy, include_cron=bool(ctx.state.get("sync_cron")))
+    entry = local.get(item_id)
+    items = dict(base.get("items") or {})
+    if entry is not None:
+        known = items.get(item_id) or {}
+        items[item_id] = {"oid": crypto.object_id(ctx.key, entry.payload),
+                          "rev": known.get("rev", 0), "kind": entry.kind}
+    base["items"] = items
+    if item_id == "config" and entry is not None:
+        base["config"] = entry.extra.get("live") or {}
+    if item_id == "env":
+        env_path = ctx.home / ".env"
+        text = env_path.read_text(encoding="utf-8", errors="ignore") if env_path.exists() else ""
+        base["env"] = items_mod.parse_env(text)
+    write_json(ctx.data / "base.json", base)
+
+    _forget_conflict(ctx, item_id)
+    pushed = push(ctx)
+    return {"ok": True, "item": item_id, "choice": "theirs", "applied": applied, "pushed": pushed}
+
+
+# ── one line about the herd ──────────────────────────────────────────────────
+def summary(home: Path) -> str:
+    """The sentence a person should be able to read at a glance."""
+    try:
+        state = status(home)
+    except HerdError as exc:
+        return str(exc)
+    counts = state["counts"]
+    parts: list[str] = []
+    if state["conflicts"]:
+        parts.append(f"{state['conflicts']} conflict(s) to review")
+    waiting_out = counts["differs"] + counts["not_pushed"]
+    if waiting_out:
+        parts.append(f"{waiting_out} change(s) to push")
+    if counts["not_local"]:
+        parts.append(f"{counts['not_local']} change(s) to pull")
+    parts = parts or ["In sync"]
+    machines = len(state["devices"])
+    return f"{' · '.join(parts)} · {machines} machine{'s' if machines != 1 else ''} · synced {state['last_sync_human']}"

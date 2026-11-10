@@ -19,9 +19,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from herd import engine, yamlutil  # noqa: E402
 
+REPO = Path(__file__).resolve().parents[1]
+# `python -c` has no __file__, so the child's import path is passed in rather
+# than discovered — otherwise every process dies with NameError and the harness
+# reports it as a sync failure.
 SCRIPT = (
     "import sys\n"
-    "sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parents[1]))\n"
+    f"sys.path.insert(0, {str(REPO)!r})\n"
     "from pathlib import Path\n"
     "from herd import engine\n"
     "engine.sync(Path(sys.argv[1]))\n"
@@ -58,10 +62,13 @@ def history(rng: random.Random, root: Path) -> tuple[bool, str]:
     for round_no in range(6):
         for h in homes:
             set_value(h, f"{h.name}{round_no}")
-        procs = [subprocess.Popen([sys.executable, "-c", SCRIPT, str(h)]) for h in homes]
-        codes = [p.wait() for p in procs]
+        procs = [subprocess.Popen([sys.executable, "-c", SCRIPT, str(h)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for h in homes]
+        results = [p.communicate() for p in procs]
+        codes = [p.returncode for p in procs]
         if any(c != 0 for c in codes):
-            return False, f"round {round_no}: sync exited {codes}"
+            err = next((err.strip().splitlines()[-1] for _out, err in results if err.strip()), "")
+            return False, f"round {round_no}: sync exited {codes}: {err}"
 
     for _ in range(5):
         for h in homes:

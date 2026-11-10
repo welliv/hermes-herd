@@ -23,7 +23,7 @@ def test_status_before_setup_explains_itself(tmp_path, monkeypatch):
     out = _payload(tools.handle_status({}))
     assert out["ok"] is False
     assert out["code"] == "not_configured"
-    assert "hermes sync init" in out["message"]
+    assert "hermes sync pair" in out["message"]
 
 
 def test_status_reports_the_herd(tmp_path, monkeypatch):
