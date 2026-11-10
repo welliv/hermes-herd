@@ -358,6 +358,10 @@ def push(ctx: Context) -> dict:
             if (lambda pl: bool(pl) and here not in pl)(items_mod.skill_platforms(path))
         }
         for item_id in set((base.get("pushed") or {})) - left:
+            known_kind = ((my_items.get(item_id).kind if item_id in my_items else "")
+                          or ((base.get("items") or {}).get(item_id) or {}).get("kind") or "file")
+            if not ctx.policy.wants(known_kind):
+                continue                          # out of scope, not deleted
             if item_id in platform_skipped or not _deletable(item_id):
                 # Absent from scan is not the same as deleted: this build may
                 # simply not know the item, or may be the wrong OS for it.
@@ -448,6 +452,11 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
         by_item = ctx.store.entries_by_item()
         for item_id, entry in sorted(merged.items()):
             if entry.device_id == ctx.device["id"]:
+                continue
+            if not ctx.policy.wants(entry.kind):
+                # A knowledge-scope machine does not take settings from the
+                # herd, and does not record them as agreed either — switching
+                # scope later must still see them as new.
                 continue
             known = base_items.get(item_id) or {}
             if known.get("oid") == entry.oid and known.get("rev") == entry.rev:
@@ -620,7 +629,12 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                     continue
                 try:
                     _backup_path(ctx, stamp, dest)
-                    atomic_write(dest, body, mode=0o600)
+                    block = ""
+                    if dest.exists():
+                        _shared, block = items_mod.split_local_block(
+                            dest.read_text(encoding="utf-8", errors="ignore"))
+                    merged_text = items_mod.join_local_block(body.decode("utf-8", "ignore"), block)
+                    atomic_write(dest, merged_text.encode("utf-8"), mode=0o600)
                     applied.append(item_id)
                 except Exception as exc:  # noqa: BLE001 - one item must not stop the pull
                     record_base = False
@@ -867,6 +881,48 @@ def gc(home: Path, keep_days: int = 30, dry_run: bool = False) -> dict:
     }
 
 
+def get_note(home: Path) -> str:
+    """The machine-only block in MEMORY.md, without its markers."""
+    path = Path(home) / "memories" / "MEMORY.md"
+    if not path.exists():
+        return ""
+    _shared, block = items_mod.split_local_block(path.read_text(encoding="utf-8", errors="ignore"))
+    if not block:
+        return ""
+    inner = block[len(items_mod.LOCAL_BEGIN): block.rfind(items_mod.LOCAL_END)]
+    return inner.strip()
+
+
+def set_note(home: Path, text: str | None) -> dict:
+    """Write (or clear) this machine's own paragraph inside MEMORY.md.
+
+    The block is stripped before the file is packed, so it never reaches another
+    machine, and it is re-appended after a pull, so a herd update cannot erase
+    "this box is the risky one".
+    """
+    home = Path(home)
+    path = home / "memories" / "MEMORY.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
+    shared, _old = items_mod.split_local_block(existing)
+    cleaned = (text or "").strip()
+    block = f"{items_mod.LOCAL_BEGIN}\n{cleaned}\n{items_mod.LOCAL_END}" if cleaned else ""
+    atomic_write(path, items_mod.join_local_block(shared, block).encode("utf-8"), mode=0o600)
+    return {"note": cleaned, "path": str(path)}
+
+
+def set_scope(home: Path, scope: str) -> dict:
+    """Switch between syncing the profile and syncing only what you taught it."""
+    scope = (scope or "").lower()
+    if scope not in ("profile", "knowledge"):
+        raise HerdError("Scope is `profile` (settings, skills, memory) or `knowledge` (skills and memory).")
+    data = data_dir(Path(home))
+    policy = Policy.load(data / "policy.yaml")
+    policy.scope = scope
+    policy.save(data / "policy.yaml")
+    return {"ok": True, "scope": scope}
+
+
 def set_secrets(home: Path, on: bool) -> dict:
     """Turn credential sync on or off for this machine, and persist the answer."""
     data = data_dir(home)
@@ -887,6 +943,9 @@ def status(home: Path) -> dict:
         mine = local.get(item_id)
         remote = merged.get(item_id)
         known = (base.get("items") or {}).get(item_id) or {}
+        kind = (mine.kind if mine else (remote.kind if remote else known.get("kind") or ""))
+        if kind and not ctx.policy.wants(kind):
+            continue                      # out of scope is not "waiting to pull"
         local_oid = crypto.object_id(ctx.key, mine.payload) if mine else ""
         if remote and remote.device_id == ctx.device["id"] and not mine:
             state = "only-here"
@@ -1015,13 +1074,21 @@ def sync(home: Path) -> dict:
 
 # ── pairing ──────────────────────────────────────────────────────────────────
 def pair_start(home: Path, store_path: str | None = None, *, remote: str = "",
-               name: str | None = None, ttl: int = pairing.DEFAULT_TTL) -> dict:
+               name: str | None = None, ttl: int = pairing.DEFAULT_TTL,
+               scope: str = "") -> dict:
     """Make a short, single-use code another machine can finish pairing with.
 
     The store is created if this machine has none, so the first command a person
     runs does not ask them to choose a folder before they know what it is for.
     """
     home = Path(home)
+    if scope:
+        # Written before the first push, so a knowledge-scope herd is born that
+        # way instead of publishing the settings it will then ignore.
+        data = data_dir(home)
+        policy = Policy.load(data / "policy.yaml")
+        policy.scope = scope
+        policy.save(data / "policy.yaml")
     if load_state(data_dir(home)).get("store"):
         ctx = open_context(home)
     else:
@@ -1172,7 +1239,10 @@ def resolve(home: Path, item_id: str, choice: str) -> dict:
             _apply_skill(ctx, item_id, body, time.strftime("%Y%m%d-%H%M%S", time.gmtime()))
         elif kind == "memory":
             dest = ctx.home / "memories" / ("MEMORY.md" if item_id == "memory:agent" else "USER.md")
-            atomic_write(dest, body, mode=0o600)
+            _shared, block = items_mod.split_local_block(
+                dest.read_text(encoding="utf-8", errors="ignore") if dest.exists() else "")
+            atomic_write(dest, items_mod.join_local_block(body.decode("utf-8", "ignore"), block).encode("utf-8"),
+                         mode=0o600)
         elif kind == "file" and item_id in FILE_TARGETS:
             atomic_write(ctx.home / FILE_TARGETS[item_id], body, mode=0o600)
         else:

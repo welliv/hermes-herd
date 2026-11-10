@@ -43,6 +43,18 @@ Paired with desktop. This machine is laptop.
   In sync · 2 machines · synced just now
 ```
 
+## When you don't need this
+
+If every machine is a *client* of one central Hermes — a box you reach over Tailscale or SSH — you already have one agent; the clients only render it. Herd is for two or more independent installs that have to agree.
+
+And if you run each machine as its own profile but you are tired of explaining the same context three times, pair in knowledge mode: **skills and memory travel, settings stay put.**
+
+```bash
+hermes sync pair --knowledge          # first machine
+hermes sync pair --code … --knowledge # the others
+hermes sync scope profile             # back to the whole profile, any time
+```
+
 ## The problem, in numbers
 
 - **24% of a real config is machine-bound** — 37 of 155 leaf keys across 12 sections. Copy them and the laptop runs commands in the desktop's Docker socket, binds its port, and answers its Telegram messages.
@@ -160,7 +172,9 @@ Hermes 0.23+.
 | **Stays put** | `terminal.backend`, `terminal.cwd`, Docker and container settings, `database.*`, `webapp.*`, `browser.*`, `auth.*`, `updates.*`, bot config, and machine env vars (`PATH`, `DISPLAY`, `HERMES_DASHBOARD_*`, `TELEGRAM_BOT_TOKEN`) |
 | **Never** | `state.db` and sessions — SQLite with a write-ahead log is not a file to sync. Cron is opt-in, because a job on three machines runs three times |
 
-The rules are data, not code: `hermes sync policy` prints them, and each is one line in `plugin-data/herd/policy.yaml`.
+**One paragraph can stay local.** `hermes sync note "this box is the VPS, and the risky one"` writes a block into `MEMORY.md` that is stripped before anything leaves the machine and re-applied after every pull. Shared memory, per-machine self-awareness.
+
+**Scope** decides what kind of thing follows you: `profile` (the default) sends settings, skills and memory; `knowledge` sends only skills and memory, so three machines can keep three different setups and still share everything you have taught them. **The rules are data, not code:** `hermes sync policy` prints them, and each is one line in `plugin-data/herd/policy.yaml`.
 
 ## Security
 
@@ -184,6 +198,8 @@ A store written by 1.0.2 or earlier holds unsealed objects. 1.0.3 skips them wit
 | `hermes sync pair --code …` | Join with that code (clones `--remote` if the store is git) |
 | `hermes sync init` / `join` | The explicit path: choose a store, use the long recovery code |
 | `hermes sync status` / `diff` | What's in sync; what a sync would do |
+| `hermes sync scope knowledge\|profile` | Share skills and memory only, or the whole profile |
+| `hermes sync note [text]` | This machine's own paragraph in memory — never synced |
 | `hermes sync secrets on` / `off` | Include API keys in sync, or stop (off until you ask) |
 | `hermes sync gc [--dry-run]` | Delete store objects nothing references any more |
 | `hermes sync undo` | Restore the files from the last pull |

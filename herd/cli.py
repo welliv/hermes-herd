@@ -111,13 +111,17 @@ def cmd_pair(args) -> int:
     code = (getattr(args, "code", "") or "").strip()
     try:
         if code:
+            if getattr(args, "knowledge", False):
+                # Before the join's first pull, or the settings arrive with it.
+                engine.set_scope(home, "knowledge")
             result = engine.pair_finish(home, code, getattr(args, "store", None),
                                         name=args.name,
                                         sync_secrets=bool(getattr(args, "sync_secrets", False)))
         else:
             result = engine.pair_start(home, getattr(args, "store", None),
                                        remote=(getattr(args, "remote", "") or "").strip(),
-                                       name=args.name)
+                                       name=args.name,
+                                       scope="knowledge" if getattr(args, "knowledge", False) else "")
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
     if _json(args):
@@ -142,6 +146,46 @@ def cmd_pair(args) -> int:
     _print(f"  hermes sync pair --code {result['code']}")
     if result.get("remote"):
         _print(f"  (it will clone {result['remote']})")
+    return 0
+
+
+def cmd_note(args) -> int:
+    home = hermes_home()
+    if getattr(args, "clear", False) or args.text is not None:
+        try:
+            result = engine.set_note(home, None if getattr(args, "clear", False) else args.text)
+        except Exception as exc:  # noqa: BLE001
+            return _fail(exc)
+        if _json(args):
+            _dump(result)
+            return 0
+        _print("Cleared this machine's note." if not result["note"] else
+               f"This machine's note (never synced):\n  {result['note']}")
+        return 0
+
+    note = engine.get_note(home)
+    if _json(args):
+        _dump({"note": note})
+        return 0
+    if note:
+        _print(note)
+    else:
+        _print("No note on this machine. Set one with `hermes sync note \"this is the VPS\"`.")
+    return 0
+
+
+def cmd_scope(args) -> int:
+    try:
+        result = engine.set_scope(hermes_home(), args.scope)
+    except Exception as exc:  # noqa: BLE001
+        return _fail(exc)
+    if _json(args):
+        _dump(result)
+        return 0
+    if result["scope"] == "knowledge":
+        _print("Sharing skills and memory only — settings stay on each machine.")
+    else:
+        _print("Sharing the whole profile — settings, skills and memory.")
     return 0
 
 
@@ -404,7 +448,8 @@ def cmd_policy(args) -> int:
     _print("\nStays on this machine (.env keys):")
     for pattern in DEFAULT_SECRET_SKIP:
         _print(f"  {pattern}")
-    _print(f"\nsecrets synced: {'yes' if policy.sync_secrets else 'no'}")
+    _print(f"\nscope: {policy.scope} ({'settings, skills, memory' if policy.scope == 'profile' else 'skills and memory only'})")
+    _print(f"secrets synced: {'yes' if policy.sync_secrets else 'no'}")
     _print(f"auto pull: {policy.auto_pull} · auto push: {policy.auto_push}")
     return 0
 
@@ -463,8 +508,21 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p.add_argument("--name", help="Name for this device (default: hostname)")
     p.add_argument("--sync-secrets", action="store_true",
                    help="Also take API keys when pairing (off by default)")
+    p.add_argument("--knowledge", action="store_true",
+                   help="Share only skills and memory; leave settings alone on every machine")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_pair)
+
+    p = subs.add_parser("note", help="This machine's own paragraph in memory (never synced)")
+    p.add_argument("text", nargs="?", help="What this machine should remember about itself")
+    p.add_argument("--clear", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_note)
+
+    p = subs.add_parser("scope", help="Sync the profile, or only skills and memory")
+    p.add_argument("scope", choices=["profile", "knowledge"])
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_scope)
 
     p = subs.add_parser("gc", help="Drop store objects no device references any more")
     p.add_argument("--keep-days", type=int, default=30,

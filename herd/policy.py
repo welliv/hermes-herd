@@ -73,6 +73,7 @@ POLICY_HEADER = """\
 #
 # local_only: config paths this machine keeps to itself (dotted paths, * wildcards)
 # shared:     paths that are local-only by default but should follow you here
+# scope:      profile = settings, skills and memory; knowledge = skills and memory only
 # secret_skip: .env keys that stay on this machine
 # sync_secrets: copy API keys and tokens between your machines (encrypted)
 #
@@ -95,6 +96,8 @@ class Policy:
         self.shared = [str(p) for p in data.get("shared") or []]
         self.secret_skip = list(DEFAULT_SECRET_SKIP) + [str(p) for p in data.get("secret_skip") or []]
         self.skill_skip = list(DEFAULT_SKILL_SKIP) + [str(p) for p in data.get("skip_skills") or []]
+        scope = str(data.get("scope") or "profile").lower()
+        self.scope = scope if scope in ("profile", "knowledge") else "profile"
         self.sync_secrets = bool(data.get("sync_secrets", False))
         self.auto_pull = bool(data.get("auto_pull", True))
         self.auto_push = bool(data.get("auto_push", True))
@@ -113,6 +116,16 @@ class Policy:
         never turned syncing on.
         """
         return not any(fnmatchcase(name, p) for p in self.secret_skip)
+
+    def wants(self, kind: str) -> bool:
+        """Does this machine take an item of *kind* from the herd?
+
+        `profile` (the default) syncs everything the other rules allow.
+        `knowledge` syncs what you taught the agent — skills and memory — and
+        leaves settings alone, for people who run each machine as its own
+        profile but are tired of explaining themselves three times.
+        """
+        return self.scope != "knowledge" or kind in ("skill", "memory")
 
     def skill_allowed(self, name: str) -> bool:
         return not any(fnmatchcase(name, p) for p in self.skill_skip)
@@ -139,6 +152,7 @@ class Policy:
             "shared": self.shared,
             "secret_skip": extra_skip,
             "skip_skills": extra_skills,
+            "scope": self.scope,
             "sync_secrets": self.sync_secrets,
             "auto_pull": self.auto_pull,
             "auto_push": self.auto_push,

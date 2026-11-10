@@ -287,6 +287,32 @@ def unpack_dir(blob: bytes, dest: Path) -> None:
 # ── scan ─────────────────────────────────────────────────────────────────────
 MEMORY_FILES = {"memory:agent": "MEMORY.md", "memory:user": "USER.md"}
 
+# A machine-specific block inside a synced memory file. It is stripped before the
+# file is packed, so it never leaves the machine, and re-appended after a pull,
+# so "you are the VPS, you are the risky one" survives a herd update.
+LOCAL_BEGIN = "<!-- herd:local:begin -->"
+LOCAL_END = "<!-- herd:local:end -->"
+
+
+def split_local_block(text: str) -> tuple[str, str]:
+    """Return (shared_text, block_including_markers). Absent block → ("", "")."""
+    start = text.find(LOCAL_BEGIN)
+    if start == -1:
+        return text, ""
+    end = text.find(LOCAL_END, start)
+    if end == -1:
+        return text, ""
+    end += len(LOCAL_END)
+    block = text[start:end]
+    shared = (text[:start] + text[end:]).rstrip() + "\n"
+    return shared, block
+
+
+def join_local_block(shared: str, block: str) -> str:
+    if not block:
+        return shared
+    return (shared.rstrip() + "\n\n" + block + "\n") if shared.strip() else (block + "\n")
+
 
 def scan(home: Path, policy: Policy, include_cron: bool = False) -> dict[str, LocalItem]:
     """Read every syncable item off this device, applying the policy as we go."""
@@ -317,8 +343,14 @@ def scan(home: Path, policy: Policy, include_cron: bool = False) -> dict[str, Lo
     for item_id, filename in MEMORY_FILES.items():
         path = home / "memories" / filename
         if path.exists():
+            raw = path.read_bytes()
+            text = raw.decode("utf-8", "ignore")
+            payload = raw
+            if LOCAL_BEGIN in text:
+                shared, _block = split_local_block(text)
+                payload = shared.encode("utf-8")
             items[item_id] = LocalItem(
-                item_id=item_id, kind="memory", payload=path.read_bytes(), mtime=path.stat().st_mtime
+                item_id=item_id, kind="memory", payload=payload, mtime=path.stat().st_mtime
             )
 
     soul = home / "SOUL.md"
@@ -342,6 +374,9 @@ def scan(home: Path, policy: Policy, include_cron: bool = False) -> dict[str, Lo
             mtime=max((p.stat().st_mtime for p in path.rglob("*") if p.is_file()), default=0.0),
             extra={"platforms": platforms, "name": name},
         )
+
+    if policy.scope != "profile":
+        items = {k: v for k, v in items.items() if policy.wants(v.kind)}
 
     if include_cron:
         jobs = home / "cron" / "jobs.json"
