@@ -178,14 +178,14 @@ A store written by 1.0.2 or earlier holds unsealed objects. 1.0.3 skips them wit
 
 | | |
 |---|---|
-| `hermes sync pair [--store PATH] [--remote URL]` | Create the herd and print one short, single-use code |
+| **`hermes sync pair [--store PATH] [--remote URL]`** | Create the herd and print one short, single-use code |
+| **`hermes sync`** | Pull, merge, push — the one you type |
+| **`hermes sync conflicts`** | Review disagreements; `--item config --take mine\|theirs` settles one |
 | `hermes sync pair --code …` | Join with that code (clones `--remote` if the store is git) |
 | `hermes sync init` / `join` | The explicit path: choose a store, use the long recovery code |
-| `hermes sync` | Pull, merge, push — the one you type |
 | `hermes sync status` / `diff` | What's in sync; what a sync would do |
 | `hermes sync secrets on` / `off` | Include API keys in sync, or stop (off until you ask) |
 | `hermes sync gc [--dry-run]` | Delete store objects nothing references any more |
-| `hermes sync conflicts` | Review disagreements; `--item config --take mine\|theirs` settles one |
 | `hermes sync undo` | Restore the files from the last pull |
 | `hermes sync policy` / `code` / `leave` | The rules; the recovery code; stop syncing |
 
