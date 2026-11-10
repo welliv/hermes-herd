@@ -10,8 +10,17 @@ Three suites, all run in CI:
   forged stores, concurrency, surface, cost.
 - `python audit/fuzz.py` — randomised three-device histories: edits, pushes,
   pulls, syncs and deletions in random order, then convergence, integrity and
-  containment invariants. `audit/fuzz_concurrent.py` does the same with three
-  `sync` processes racing.
+  containment invariants.
+- `python audit/fuzz_deep.py` — the harder version: three or four devices,
+  deletions, secrets, and the rule that divergence is always explained by a
+  recorded conflict.
+- `python audit/fuzz_concurrent.py` — three `sync` processes racing.
+- `python audit/fuzz_corrupt.py` — deleted, truncated, flipped and forged store
+  objects between pulls.
+
+Latest campaign: **100/100** three-device histories, **120/120** deep
+three-or-four-device histories, **20/20** concurrent races, **24/24**
+corrupt-store runs.
 
 | Claim | Evidence |
 |---|---|
@@ -20,6 +29,7 @@ Three suites, all run in CI:
 | A pull cannot delete the section the machine is running on | `test_remote_config_never_deletes_local_only_sections` |
 | Secrets are encrypted in the store | `test_store_never_contains_plaintext`; matrix `crypto/no plaintext` |
 | Machine env vars stay put | `test_secrets_are_synced_but_machine_vars_are_not`; matrix `env/skip list binds inbound` |
+| A disagreement is never republished in a loop, and stays reported until both sides agree | `test_conflicts_disappear_once_the_sides_agree`; `fuzz_deep.py` asserts divergence ⇒ conflict |
 | Conflicting edits are kept, and both sides are told | `test_same_key_edited_on_both_sides_keeps_local_and_records_it`; matrix `merge/both edited, both pushed, then pull`; audit C3 |
 | A platform-specific skill is never installed elsewhere, and never deleted by that machine | `test_platform_specific_skill_is_not_installed_elsewhere`; matrix `items/platform *` |
 | Deletions propagate | `test_deleting_a_skill_propagates`; matrix `items/skill deletion propagates` |
