@@ -41,9 +41,9 @@ def _code_block(code: str) -> None:
     _print()
     _print(f"    {code}")
     _print()
-    _print("  It decrypts the store. Anyone holding it can read your keys, and it")
-    _print("  cannot be reset. Keep it in a password manager, not in this terminal's")
-    _print("  scrollback alone.")
+    _print("  It decrypts the store. Anyone holding it can read what the herd synced,")
+    _print("  and it cannot be reset. Keep it in a password manager, not in this")
+    _print("  terminal's scrollback alone.")
 
 
 # ── commands ─────────────────────────────────────────────────────────────────
@@ -96,6 +96,8 @@ def cmd_join(args) -> int:
     pulled = result["pulled"]
     _print(f"Joined the herd as {result['device']['name']}.")
     _print(f"  pulled  {len(pulled['applied'])} item(s): {', '.join(pulled['applied']) or '—'}")
+    for warning in pulled.get("warnings") or []:
+        _print(f"  note    {warning}")
     kept = [c for c in pulled.get("conflicts") or [] if c.get("kept") == "local"]
     adopted = [c for c in pulled.get("conflicts") or [] if c.get("kept") == "remote"]
     if kept:
@@ -132,6 +134,8 @@ def cmd_pair(args) -> int:
         pulled = result["pulled"]
         _print(f"Paired with {result['paired_with']}. This machine is {result['device']['name']}.")
         _print(f"  pulled  {len(pulled['applied'])} item(s): {', '.join(pulled['applied']) or '—'}")
+        for warning in pulled.get("warnings") or []:
+            _print(f"  note    {warning}")
         _print(f"  {engine.summary(home)}")
         return 0
 
@@ -216,12 +220,8 @@ def cmd_secrets(args) -> int:
     if _json(args):
         _dump(result)
         return 0
-    if on:
-        _print("API keys will be encrypted and synced from now on.")
-        _print("`hermes sync push` sends this machine's keys; `pull` takes the other machines'.")
-    else:
-        _print("API keys stay on this machine. Nothing reads .env while this is off.")
-    return 0
+    _print(result.get("message") or "API keys stay on this machine. Herd does not read or write .env.")
+    return 0 if result.get("ok") else 1
 
 
 def cmd_status(args) -> int:
@@ -242,7 +242,7 @@ def cmd_status(args) -> int:
     if state.get("remote"):
         _print(f"remote   {state['remote']}")
     _print(f"last     {state['last_sync_human']}")
-    _print(f"secrets  {'encrypted and synced' if state['secrets'] else 'off (hermes sync secrets on)'}")
+    _print("secrets  not synced (Herd does not read or write .env)")
     if state.get("conflicts"):
         _print(f"kept     {state['conflicts']} value(s) where both sides differed — `hermes sync conflicts`")
     _print()
@@ -269,13 +269,17 @@ def cmd_diff(args) -> int:
     if _json(args):
         _dump(result)
         return 0
-    if not result["would_push"] and not result["would_pull"]:
+    review = set(result.get("review_before_pull") or [])
+    if not result["would_push"] and not result["would_pull"] and not result.get("diverged"):
         _print("Nothing to do — every item matches the store.")
         return 0
     for item in result["would_push"]:
         _print(f"  ↑ {item}")
     for item in result["would_pull"]:
-        _print(f"  ↓ {item}")
+        note = "  (incoming instructions — review before pull)" if item in review else ""
+        _print(f"  ↓ {item}{note}")
+    for item in result.get("diverged") or []:
+        _print(f"  ~ {item}  (changed on both sides — not pushed)")
     return 0
 
 
@@ -449,7 +453,7 @@ def cmd_policy(args) -> int:
     for pattern in DEFAULT_SECRET_SKIP:
         _print(f"  {pattern}")
     _print(f"\nscope: {policy.scope} ({'settings, skills, memory' if policy.scope == 'profile' else 'skills and memory only'})")
-    _print(f"secrets synced: {'yes' if policy.sync_secrets else 'no'}")
+    _print("secrets synced: no (unsupported — Herd does not read or write .env)")
     _print(f"auto pull: {policy.auto_pull} · auto push: {policy.auto_push}")
     return 0
 
@@ -475,7 +479,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p.add_argument("--remote", help="Git remote to push the store to (creates the local clone)")
     p.add_argument("--name", help="Name for this device (default: hostname)")
     p.add_argument("--sync-secrets", action="store_true",
-                   help="Include API keys (off by default; `hermes sync secrets on` later)")
+                   help="Ignored. API key sync is not supported; Herd does not read .env")
     p.add_argument("--no-secrets", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--cron", action="store_true", help="Also sync cron jobs (off by default)")
     p.add_argument("--json", action="store_true")
@@ -485,7 +489,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p.add_argument("store", help="Folder, or a git URL to clone")
     p.add_argument("--code", required=True, help="Recovery code from `hermes sync code`")
     p.add_argument("--sync-secrets", action="store_true",
-                   help="Also take API keys (off by default; `hermes sync secrets on` later)")
+                   help="Ignored. API key sync is not supported; Herd does not read .env")
     p.add_argument("--name", help="Name for this device (default: hostname)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_join)
@@ -507,7 +511,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p.add_argument("--remote", help="Git remote to create the store against (first machine)")
     p.add_argument("--name", help="Name for this device (default: hostname)")
     p.add_argument("--sync-secrets", action="store_true",
-                   help="Also take API keys when pairing (off by default)")
+                   help="Ignored. API key sync is not supported; Herd does not read .env")
     p.add_argument("--knowledge", action="store_true",
                    help="Share only skills and memory; leave settings alone on every machine")
     p.add_argument("--json", action="store_true")
@@ -531,7 +535,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_gc)
 
-    p = subs.add_parser("secrets", help="Include or exclude API keys from syncing")
+    p = subs.add_parser("secrets", help="API key sync is not supported; this command explains why")
     p.add_argument("state", choices=["on", "off"])
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_secrets)

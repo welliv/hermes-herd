@@ -272,22 +272,26 @@ def _():
     return st["secrets"] is False and "env" not in ctx.store.merged(), f"secrets={st['secrets']}"
 
 
-@check("env", "opt-in sends keys and the peer applies them")
+@check("env", "asking to sync keys does not read or write .env")
 def _():
     root, a, b = pair(secrets=True)
+    before = (b / ".env").read_text() if (b / ".env").exists() else ""
     (a / ".env").write_text("OPENAI_API_KEY=sk-1\n")
+    turned = engine.set_secrets(a, True)
     engine.push(engine.open_context(a)); engine.pull(engine.open_context(b))
-    return "OPENAI_API_KEY=sk-1" in (b / ".env").read_text(), (b / ".env").read_text().strip()
+    after = (b / ".env").read_text() if (b / ".env").exists() else ""
+    no_item = "env" not in engine.open_context(a).store.merged()
+    return (turned["supported"] is False and no_item and after == before), f"turned={turned['supported']} item={not no_item}"
 
 
-@check("env", "skip list binds inbound")
+@check("env", "an inbound env payload is not applied")
 def _():
     root, a, b = pair(secrets=True)
-    engine.set_secrets(b, True)
     ctx = engine.open_context(b)
+    before = (b / ".env").read_text() if (b / ".env").exists() else ""
     res = engine._apply_env(ctx, json.dumps({"HERMES_HOME": "/tmp/x", "OK_KEY": "v"}).encode(), {}, "t")
     text = (b / ".env").read_text() if (b / ".env").exists() else ""
-    return "HERMES_HOME" not in text and "OK_KEY" in text, f"skipped={res['skipped']}"
+    return text == before and res["changed"] is False and "HERMES_HOME" not in text, f"skipped={res['skipped']}"
 
 
 @check("env", "a value cannot carry a line")
@@ -494,12 +498,12 @@ def _():
 
 @check("attack", "payload kind is bound to its item")
 def _():
-    root, a, b = pair(secrets=True)
-    (a / ".env").write_text("OPENAI_API_KEY=sk-1\n"); engine.push(engine.open_context(a))
-    oid = engine.open_context(a).store.merged()["env"].oid
+    root, a, b = pair()
+    oid = engine.open_context(a).store.merged()["memory:agent"].oid
+    before = (b / "config.yaml").read_text()
     forge(root, "config", oid, "config")
     engine.pull(engine.open_context(b))
-    return "OPENAI_API_KEY" not in (b / "config.yaml").read_text(), "env payload used as config"
+    return (b / "config.yaml").read_text() == before, "memory payload used as config"
 
 
 @check("attack", "unknown item kind is ignored")
@@ -683,14 +687,14 @@ def _():
     return set(o for o, _, _ in after) >= referenced and len(after) < before, f"{before} -> {len(after)}, refs kept"
 
 
-@check("surface", "secrets off/on round trip through the engine")
+@check("surface", "secrets cannot be turned on")
 def _():
     root, a, b = pair()
-    engine.set_secrets(a, True)
-    ok_on = engine.status(a)["secrets"] is True
+    turned = engine.set_secrets(a, True)
+    stayed = engine.status(a)["secrets"] is False and turned["supported"] is False
     engine.set_secrets(a, False)
-    ok_off = engine.status(a)["secrets"] is False
-    return ok_on and ok_off, f"{ok_on}/{ok_off}"
+    off = engine.status(a)["secrets"] is False
+    return stayed and off, f"on_refused={stayed} off={off}"
 
 
 # ── 8. cost ────────────────────────────────────────────────────────────────

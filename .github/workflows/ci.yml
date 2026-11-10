@@ -49,3 +49,8 @@ jobs:
         run: python scripts/check_manifest.py
       - name: Docs links
         run: python scripts/check_docs_links.py
+      - name: Package installs (regular and editable)
+        # setuptools' flat discovery used to fail `pip install -e .` while
+        # `hermes plugins validate --install-deps` still said it passed.
+        if: runner.os == 'Linux' && matrix.python-version == '3.12'
+        run: python scripts/check_install.py

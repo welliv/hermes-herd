@@ -5,7 +5,7 @@ here so a claim without one can be deleted rather than believed.
 
 Five suites, all run in CI:
 
-- `python -m pytest tests -q` — **90 passed** (unit, two-device end-to-end, pairing, conflict resolution, knowledge scope, per-machine memory note).
+- `python -m pytest tests -q` — **101 passed** (unit, two-device end-to-end, pairing, conflict resolution, knowledge scope, per-machine memory note, approval, undo).
 - `python audit/matrix.py` — **55 checks**: crypto, merge orderings, env, items,
   forged stores, concurrency, surface, cost.
 - `python audit/fuzz.py` — randomised three-device histories: edits, pushes,
@@ -32,8 +32,10 @@ corrupt-store runs.
 | A second machine is useful in one command | `test_join_merges_without_breaking_the_new_machine`; matrix `merge/*` |
 | Machine-bound keys never travel | `test_scrubbed_config_keeps_machine_keys_out_of_the_store`; fuzz asserts `webapp.port` never takes a peer value |
 | A pull cannot delete the section the machine is running on | `test_remote_config_never_deletes_local_only_sections` |
-| Secrets are encrypted in the store | `test_store_never_contains_plaintext`; matrix `crypto/no plaintext` |
-| Machine env vars stay put | `test_secrets_are_synced_but_machine_vars_are_not`; matrix `env/skip list binds inbound` |
+| API keys are not read or written | `test_sync_never_opens_dotenv`; `test_secrets_are_not_synced_even_when_asked`; matrix `env/asking to sync keys does not read or write .env` |
+| A newer local file is not replaced by an older store copy | `test_sync_keeps_a_newer_local_soul` |
+| Undo deletes files the pull created | `test_undo_removes_a_skill_the_pull_created` |
+| A remote-only change is a pull | `test_a_remote_change_is_a_pull_not_a_push` |
 | A disagreement is never republished in a loop, and stays reported until both sides agree | `test_conflicts_disappear_once_the_sides_agree`; `fuzz_deep.py` asserts divergence ⇒ conflict |
 | Conflicting edits are kept, and both sides are told | `test_same_key_edited_on_both_sides_keeps_local_and_records_it`; matrix `merge/both edited, both pushed, then pull`; audit C3 |
 | A platform-specific skill is never installed elsewhere, and never deleted by that machine | `test_platform_specific_skill_is_not_installed_elsewhere`; matrix `items/platform *` |
@@ -49,7 +51,7 @@ corrupt-store runs.
 | Two devices cannot clobber each other's manifests | `test_git_transport_clones_to_a_second_machine`; matrix `concurrency/*` |
 | Fast enough to run on session start | matrix `cost/*` — 200 skills 1.2 s, 5 MB skill 0.5 s, hook 2.3 ms |
 | The plugin is loadable and honest about itself | `hermes plugins validate .` — all checks pass; declared tools, hooks and CLI match |
-| The whole suite is green | `pytest` 64, `matrix.py` 55/55, randomised histories clean |
+| The whole suite is green | `pytest` 101, `matrix.py` 55/55, randomised histories clean |
 
 ## What the vision promises that the build does not do yet
 

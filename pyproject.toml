@@ -4,10 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-herd"
-version = "1.0.0"
+version = "1.2.0"
 description = "Keep one Hermes across every machine: per-key settings sync, encrypted secrets, restorable backups."
 requires-python = ">=3.10"
 dependencies = ["cryptography>=41", "ruamel.yaml>=0.17"]
+
+[tool.setuptools]
+# demo/ and audit/ are harnesses, not installable packages. Leaving discovery
+# on makes `pip install -e .` fail with "Multiple top-level packages".
+packages = ["herd"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

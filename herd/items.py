@@ -327,18 +327,9 @@ def scan(home: Path, policy: Policy, include_cron: bool = False) -> dict[str, Lo
         extra={"live": conf, "text": text},
     )
 
-    env_path = home / ".env"
-    if policy.sync_secrets and env_path.exists():
-        env = {k: v for k, v in parse_env(env_path.read_text(encoding="utf-8", errors="ignore")).items()
-               if policy.secret_allowed(k)}
-        if env:
-            items["env"] = LocalItem(
-                item_id="env",
-                kind="env",
-                payload=canonical(env),
-                mtime=env_path.stat().st_mtime,
-                extra={"live": env},
-            )
+    # API keys are not an item. Catalog rule 11: a plugin does not open
+    # ~/.hermes/.env, and Hermes has no API for moving another product's
+    # provider keys between machines. policy.sync_secrets is ignored.
 
     for item_id, filename in MEMORY_FILES.items():
         path = home / "memories" / filename

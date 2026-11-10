@@ -1,6 +1,6 @@
 name: herd
-version: 1.1.1
-description: "Two machines, one Hermes — pair with one short code: settings, skills and memory follow you between devices, and API keys follow once you turn that on. Each machine keeps what belongs to it — its Docker path, its ports, its bot tokens — because config is merged per key, not copied. Secrets are encrypted before they leave; every pull can be undone."
+version: 1.2.0
+description: "Two machines, one Hermes — pair with one short code: settings, skills and memory follow you between devices. API keys are not synced. Each machine keeps what belongs to it — its Docker path, its ports, its bot tokens — because config is merged per key, not copied. Every pull can be undone."
 author: "Welliv"
 homepage: "https://github.com/welliv/hermes-herd"
 license: "MIT"
@@ -17,6 +17,7 @@ provides_tools:
 provides_hooks:
   - on_session_start
   - on_session_end
+  - pre_tool_call
 python_dependencies:
   - "cryptography>=41,<52"
   - "ruamel.yaml>=0.17,<0.19"

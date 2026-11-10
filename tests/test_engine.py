@@ -77,14 +77,11 @@ def test_scrubbed_config_keeps_machine_keys_out_of_the_store(herd):
     assert "terminal" not in conf
 
 
-def test_secrets_are_synced_but_machine_vars_are_not(herd):
+def test_secrets_are_not_synced_even_when_asked(herd):
     st = store_mod.open_store(herd["store"])
-    key = st.unlock(herd["code"])
-    _iid, _kind, _body = items.open_item(st.get(key, st.merged()["env"].oid))
-    env = json.loads(_body)
-    assert env["DEEPSEEK_API_KEY"] == "sk-aaa"
-    assert "PATH" not in env
-    assert "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD" not in env
+    assert "env" not in st.merged()
+    assert herd["init"]["secrets"] is False
+    assert "secrets_warning" in herd["init"]
 
 
 def test_join_merges_without_breaking_the_new_machine(herd):
@@ -108,9 +105,8 @@ webapp:
     assert "cwd: /srv/b" in conf
     assert "port: 9999" in conf                 # local-only: untouched
     env = (b / ".env").read_text()
-    assert "DEEPSEEK_API_KEY=sk-aaa" in env
-    assert "OPENAI_API_KEY=sk-bbb" in env
-    assert "PATH=/usr/bin" in env
+    assert "DEEPSEEK_API_KEY" not in env
+    assert env == "OPENAI_API_KEY=sk-bbb\nPATH=/usr/bin\n"
     assert (b / "skills" / "demo" / "SKILL.md").exists()
     assert "memory from a" in (b / "memories" / "MEMORY.md").read_text()
 
@@ -284,52 +280,54 @@ def test_conflicts_disappear_once_the_sides_agree(herd):
 
 def test_a_store_key_cannot_smuggle_a_line_into_env(herd):
     ctx = engine.open_context(herd["a"])
+    before = (herd["a"] / ".env").read_text()
     payload = json.dumps({
         "OPENAI_API_KEY": "from-peer",
         "SLACK_CHANNEL\nANTHROPIC_BASE_URL=https://evil.example #": "x",
     }).encode()
-    engine._apply_env(ctx, payload, {}, "smuggle")
+    result = engine._apply_env(ctx, payload, {}, "smuggle")
     text = (herd["a"] / ".env").read_text()
-    env = items.parse_env(text)
-    assert env["OPENAI_API_KEY"] == "from-peer"
-    assert "ANTHROPIC_BASE_URL" not in env
+    assert text == before
     assert "evil.example" not in text
+    assert result["changed"] is False
 
 
 def test_this_machines_skip_rules_bind_on_the_way_in(herd):
     ctx = engine.open_context(herd["a"])
+    before = (herd["a"] / ".env").read_text()
     payload = json.dumps({
         "HERMES_HOME": "/tmp/elsewhere",
         "PATH": "/evil",
         "DEEPSEEK_API_KEY": "from-peer",
     }).encode()
     result = engine._apply_env(ctx, payload, {}, "inbound")
-    env = items.parse_env((herd["a"] / ".env").read_text())
-    assert "HERMES_HOME" not in env
-    assert env["PATH"] == "/usr/local/bin:/usr/bin"  # untouched, not the peer's value
-    assert env["DEEPSEEK_API_KEY"] == "from-peer"
-    assert sorted(result["skipped"]) == ["HERMES_HOME", "PATH"]
+    assert (herd["a"] / ".env").read_text() == before
+    assert result["changed"] is False
+    assert result["skipped"]
 
 
 def test_a_managed_key_is_left_to_the_administrator(herd, monkeypatch):
     monkeypatch.setattr(
-        engine.env_io, "refusal",
+        "herd.env_io.refusal",
         lambda k: "managed by your administrator" if k == "STRIPE_KEY" else None,
     )
     ctx = engine.open_context(herd["a"])
-    engine._apply_env(
+    before = (herd["a"] / ".env").read_text()
+    result = engine._apply_env(
         ctx, json.dumps({"STRIPE_KEY": "sk_live", "OTHER_KEY": "v"}).encode(), {}, "managed")
-    env = items.parse_env((herd["a"] / ".env").read_text())
-    assert "STRIPE_KEY" not in env
-    assert env["OTHER_KEY"] == "v"
+    assert (herd["a"] / ".env").read_text() == before
+    assert "STRIPE_KEY" not in before
+    assert result["changed"] is False
 
 
 def test_env_write_is_announced_to_the_cache(herd, monkeypatch):
     seen = []
-    monkeypatch.setattr(engine.env_io, "invalidate", lambda p: seen.append(Path(p)))
+    monkeypatch.setattr("herd.env_io.invalidate", lambda p: seen.append(Path(p)))
     ctx = engine.open_context(herd["a"])
+    before = (herd["a"] / ".env").read_text()
     engine._apply_env(ctx, json.dumps({"NEW_KEY": "v"}).encode(), {}, "cache")
-    assert seen == [herd["a"] / ".env"]
+    assert seen == []
+    assert (herd["a"] / ".env").read_text() == before
 
 
 # --- credentials are opt-in, and "off" means the file is never opened --------
@@ -359,18 +357,17 @@ def test_off_never_opens_env(herd, monkeypatch):
     assert result["changed"] is False
 
 
-def test_secrets_command_turns_it_on(tmp_path):
+def test_secrets_command_cannot_turn_it_on(tmp_path):
     home = make_home(tmp_path, "later")
     engine.init(home, str(tmp_path / "store-later"), name="desk")
-    engine.set_secrets(home, True)
+    result = engine.set_secrets(home, True)
     ctx = engine.open_context(home)
-    assert ctx.policy.sync_secrets is True
+    assert result["supported"] is False
+    assert result["secrets"] is False
+    assert ctx.policy.sync_secrets is False
     engine.push(ctx)
     st = store_mod.open_store(tmp_path / "store-later")
-    key = st.unlock(engine.open_context(home).identity["code"])
-    merged = st.merged()
-    assert "env" in merged
-    assert json.loads(items.open_item(st.get(key, merged["env"].oid))[2])["DEEPSEEK_API_KEY"] == "sk-aaa"
+    assert "env" not in st.merged()
 
 
 # --- the .env codec has to survive a round trip ------------------------------
@@ -404,7 +401,7 @@ def test_a_value_cannot_carry_a_line_into_env(herd):
     after = (herd["a"] / ".env").read_text()
     assert before == after
     assert result["changed"] is False
-    assert "line break" in result["skipped"][0]
+    assert result["skipped"]
 
 
 # --- housekeeping: the store must not grow forever ---------------------------

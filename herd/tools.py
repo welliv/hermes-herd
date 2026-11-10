@@ -4,29 +4,38 @@ from __future__ import annotations
 
 import json
 
-from . import engine
+from . import engine, guard
 from .util import hermes_home
 
 STATUS_SCHEMA = {
     "name": "sync_status",
     "description": (
         "Show whether this Hermes is in sync across machines: which items differ, "
-        "when it last synced, and which devices are in the herd."
+        "when it last synced, and which devices are in the herd. Read-only. "
+        "A git store is fetched and not rebased or pushed."
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 DIFF_SCHEMA = {
     "name": "sync_diff",
-    "description": "List exactly what `sync_now` would push or pull, without changing anything.",
+    "description": (
+        "List what sync_now would push or pull, without changing anything. "
+        "A change that exists only on another machine is a pull, not a push. "
+        "Skills, memory and SOUL.md that would be pulled are listed in "
+        "review_before_pull: they become instructions this agent follows. "
+        "Read-only: a git store is fetched and not rebased or pushed."
+    ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 SYNC_SCHEMA = {
     "name": "sync_now",
     "description": (
-        "Sync this Hermes with the other machines in the herd. Pull first unless this "
-        "device has unsynced edits, in which case push first so nothing is overwritten."
+        "Sync this Hermes with the other machines in the herd. Asks for approval "
+        "before pulling or pushing, because that can overwrite config, skills, "
+        "memory and SOUL.md from a paired machine. Refuses in cron and other "
+        "non-interactive sessions. Does not read or write API keys."
     ),
     "parameters": {
         "type": "object",
@@ -66,7 +75,11 @@ def handle_status(args: dict, **_kw) -> str:
             "last_sync_human": state.get("last_sync_human"),
             "secrets_synced": state["secrets"],
             "counts": state["counts"],
-            "differs": [r["item"] for r in state["items"] if r["state"] in ("differs", "not-pushed")],
+            "differs": [
+                r["item"] for r in state["items"]
+                if r["state"] in ("local-ahead", "remote-ahead", "diverged", "not-pushed")
+            ],
+            "incoming_instructions": state.get("incoming_instructions") or [],
             "not_local": [r["item"] for r in state["items"] if r["state"] == "not-local"],
             "devices": [
                 {"name": d["name"], "platform": d["platform"], "this_device": d["this_device"]}
@@ -85,7 +98,13 @@ def handle_diff(args: dict, **_kw) -> str:
         return _err("diff_failed", str(exc))
 
 
-def handle_sync(args: dict, **_kw) -> str:
+def handle_sync(args: dict, **kw) -> str:
+    if guard.unattended(kw):
+        return _err(
+            "unattended",
+            "sync_now was not run. Cron and other non-interactive sessions do not "
+            "pull or overwrite config, skills, memory or SOUL.md.",
+        )
     direction = (args or {}).get("direction") or "auto"
     try:
         if direction == "pull":

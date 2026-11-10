@@ -1,5 +1,7 @@
 # The 89-second demo
 
+The checked-in film is the 1.1 cut. It includes a shot of `hermes sync secrets on` copying a key. **1.2 does not sync API keys** and that command refuses. `demo/demo.sh` matches 1.2; re-record before treating the film as current.
+
 This is a **screen recording**, not a re-typeset render. `demo/record.sh` opens
 a terminal on a headless display, runs `demo/demo.sh` against two throwaway
 Hermes homes, and films the display with `ffmpeg`. Every line on screen was
@@ -22,7 +24,7 @@ terminal is noise. If you publish it with narration, use the script below.
 | 0:19 | `ls laptop/skills` → the same three skills | It really arrived |
 | 0:26 | laptop `cwd: /srv/laptop/work`, `port: 9131` · desktop `cwd: /home/desk/work`, `port: 9120` | It did **not** copy the machine |
 | 0:35 | both machines change `display.skin` → `hermes sync conflicts` shows `1 this machine "laptop"` / `2 the store "desk"` → `--take theirs` → `In sync` | A disagreement is a choice, not a merge conflict |
-| 0:53 | `hermes sync secrets on` on both → write `DEMO_KEY` on the laptop → sync → `grep DEMO_KEY desk/.env` finds it | Credentials are opt-in and they travel |
+| 0:53 | `hermes sync secrets on` → refusal. `DEMO_KEY` written on the laptop stays there after both machines sync | API keys are not copied. The 1.1 film still shows the old shot |
 | 1:05 | `grep -r herd-demo-123 ~/hd/store` → `(no plaintext in the store)` | Encrypted before it leaves |
 | 1:17 | `hermes sync undo` → `grep DEMO_KEY desk/.env` → key gone | Every pull is reversible |
 | 1:25 | **Same agent. Different machines.** — `hermes sync`: pull, merge, push | The whole product in one line |
@@ -40,8 +42,8 @@ terminal is noise. If you publish it with narration, use the script below.
 > there — while the Docker path and the port stay the laptop's own.
 >
 > When both machines change the same thing, it doesn't guess: it shows you both
-> values and you press 1 or 2. Keys are a switch, off until you ask. And any
-> pull can be undone.
+> values and you press 1 or 2. API keys stay on the machine that has them. And
+> any pull can be undone.
 >
 > Same agent. Different machines.
 

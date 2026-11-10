@@ -75,7 +75,7 @@ POLICY_HEADER = """\
 # shared:     paths that are local-only by default but should follow you here
 # scope:      profile = settings, skills and memory; knowledge = skills and memory only
 # secret_skip: .env keys that stay on this machine
-# sync_secrets: copy API keys and tokens between your machines (encrypted)
+# sync_secrets: ignored. API keys are not synced; Herd never reads .env.
 #
 # Print the effective rules with: hermes sync policy
 """
@@ -98,7 +98,9 @@ class Policy:
         self.skill_skip = list(DEFAULT_SKILL_SKIP) + [str(p) for p in data.get("skip_skills") or []]
         scope = str(data.get("scope") or "profile").lower()
         self.scope = scope if scope in ("profile", "knowledge") else "profile"
-        self.sync_secrets = bool(data.get("sync_secrets", False))
+        # Older policy files may say true. It is not honored: this build does
+        # not read or write ~/.hermes/.env (catalog rule 11).
+        self.sync_secrets = False
         self.auto_pull = bool(data.get("auto_pull", True))
         self.auto_push = bool(data.get("auto_push", True))
 
@@ -111,9 +113,9 @@ class Policy:
     def secret_allowed(self, name: str) -> bool:
         """True when the skip rules do not exclude *name*.
 
-        Whether secrets travel at all is ``sync_secrets``, a separate switch:
-        a key can be allowed by the rules and still stay put because the person
-        never turned syncing on.
+        Credential sync is unsupported, so this only describes the skip list a
+        future transport would have to honor. Nothing in this build reads it
+        off disk.
         """
         return not any(fnmatchcase(name, p) for p in self.secret_skip)
 

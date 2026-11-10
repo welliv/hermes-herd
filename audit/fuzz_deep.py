@@ -155,9 +155,10 @@ def history(rng: random.Random, root: Path) -> tuple[bool, str]:
             bodies.add(p.read_text().splitlines()[-1] if p.exists() else None)
         if len(bodies) > 1 and conflicts == 0:
             problems.append(f"skill {name} differs with no conflict")
-    envs = {json.dumps(env_of(h), sort_keys=True) for h in homes}
-    if len(envs) > 1 and conflicts == 0:
-        problems.append(f".env differs with no conflict: {envs}")
+    # .env is local. Differing keys are not a missed conflict: nothing reads the file.
+    blob = b"".join(p.read_bytes() for p in (root / "store").rglob("*") if p.is_file())
+    if b"OPENAI_API_KEY" in blob:
+        problems.append("env name landed in the store")
 
     # machine-bound key never travels
     for h in homes:

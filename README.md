@@ -8,7 +8,7 @@ Settings, skills and memory follow you between machines; each machine keeps the 
 
 [![Herd: two machines, one Hermes](docs/media/herd-demo.gif)](docs/media/herd-demo.mp4)
 
-*89 seconds, real commands: pairing, the machine-bound split, a conflict settled with one key, keys arriving encrypted, undo.*
+*89 seconds, real commands: pairing, the machine-bound split, a conflict settled with one key, undo. The film is the 1.1 cut and still shows API keys travelling; 1.2 does not sync keys.*
 
 ## The short version
 
@@ -69,7 +69,7 @@ The measured detail, including the four prior attempts that all move files: [`PR
 |---|---|---|
 | Second machine is empty | Retype keys, reinstall skills, re-teach memory | `join` with the code, once |
 | Machine-bound settings | Copied and wrong, or excluded and missing | Resolved to each machine's own value |
-| Secrets | Plaintext in a cloud folder, or never synced | Encrypted before they leave; off until you ask |
+| Secrets | Plaintext in a cloud folder, or never synced | Left on each machine. Herd does not read or write `.env` |
 | Simultaneous edits | Last write wins, silently | A card in the terminal: `1` keep mine, `2` take theirs — the disagreement is recorded until you choose |
 | A mistake | Restore from a backup you may not have | `hermes sync undo` |
 
@@ -81,7 +81,7 @@ The measured detail, including the four prior attempts that all move files: [`PR
    │ config.yaml  │                │ config.yaml  │
    │ skills/      │                │ skills/      │
    │ memories/    │                │ memories/    │
-   │ .env         │                │ .env         │
+   │ SOUL.md      │                │ SOUL.md      │
    └──────┬───────┘                └──────┬───────┘
           │   merge per key, base = last agreed   │
           └────────────────┬──────────────────────┘
@@ -114,14 +114,14 @@ Machine-bound paths are resolved to the local value *before* that comparison —
 - **The surfaces stop competing.** CLI, TUI, desktop, webapp, 21+ messaging platforms: without shared state each one boots a different agent, and a new surface loses to the first one. With it, they are the same agent in different windows.
 - **The catalog becomes portable.** Skills, automations and connectors are per-host today; make state portable once and every plugin that stores state inherits it.
 - **The agent can answer for itself.** Three tools — `sync_status`, `sync_diff`, `sync_now` — so "am I in sync?" is a question Hermes answers, not a command you have to remember.
-- **Nothing runs in the background.** No daemon, no port, no server. The store is a folder; if you can back up a folder you can run this.
+- **No daemon, no port, no server.** The store is a folder. Session start and session end each start one short-lived background thread (a pull or a push, at most once every two minutes) and that thread exits. Cron and other non-interactive sessions do not start it.
 - **It is reversible.** Every pull leaves a backup, and `hermes sync undo` puts the files back.
 
 ## How it compares
 
 | Tool | Machine-bound keys | Secrets | Conflicts | Score |
 |---|---|---|---|---|
-| **Herd** | Modelled per key | Encrypted, opt-in | Kept, then one key to settle | **89** |
+| **Herd** | Modelled per key | Not synced | Kept, then one key to settle | **77** |
 | Dotfiles + age/SOPS | Hand-written templates | Encrypted in git | Git conflict, by hand | 59 |
 | Syncthing / Dropbox | Copied over each other | Provider-side, plaintext | Conflict copies, `.db` corruption | 51 |
 | Shared home over SSH | One config for all hosts | Stays on the server | None to resolve | 51 |
@@ -168,7 +168,7 @@ Hermes 0.23+.
 
 | | |
 |---|---|
-| **Follows you** | model and provider, display, agent behaviour, skills, memory (`MEMORY.md`, `USER.md`), `SOUL.md` — and, only with `hermes sync secrets on`, the API keys that aren't machine-specific |
+| **Follows you** | model and provider, display, agent behaviour, skills, memory (`MEMORY.md`, `USER.md`), `SOUL.md` |
 | **Stays put** | `terminal.backend`, `terminal.cwd`, Docker and container settings, `database.*`, `webapp.*`, `browser.*`, `auth.*`, `updates.*`, bot config, and machine env vars (`PATH`, `DISPLAY`, `HERMES_DASHBOARD_*`, `TELEGRAM_BOT_TOKEN`) |
 | **Never** | `state.db` and sessions — SQLite with a write-ahead log is not a file to sync. Cron is opt-in, because a job on three machines runs three times |
 
@@ -178,15 +178,19 @@ Hermes 0.23+.
 
 ## Security
 
-- **Encrypted before it leaves.** One 32-byte key, stretched with scrypt, used for AES-256-GCM. The store holds ciphertext.
-- **Names are keyed hashes.** Objects are addressed by `HMAC(key, plaintext)`, so the store can't be probed by hashing guesses at a known setting.
-- **One recovery code.** Printed by `init`, reprintable with `hermes sync code`. It decrypts everything and cannot be reset — keep it in a password manager.
-- **Every payload names itself.** An object carries the item id and kind it was sealed for, so a manifest cannot point the config item at the secrets blob, and a repeated object cannot be replayed as another item.
-- **Credentials are opt-in.** Until you run `hermes sync secrets on`, nothing reads `.env` on either side: the file is not opened, and a peer's keys are left in the store untouched.
-- **A disagreement stops, it does not ping-pong.** Each side keeps its version, records the disagreement, and stops republishing the item until one side agrees.
-- **A peer cannot widen your rules.** The skip list binds in both directions; a key name must be a plain environment name before it can become a line; every `.env` write goes through Hermes's own check and then re-reads the file.
+The trust boundary is the other machine. Read [`SECURITY.md`](SECURITY.md) before pairing.
 
-A store written by 1.0.2 or earlier holds unsealed objects. 1.0.3 skips them with a message rather than guessing; start a fresh store, or push once from each machine still running the old version.
+- **A paired machine can change what the agent follows.** A pull writes `skills/`, `memories/MEMORY.md`, `memories/USER.md` and `SOUL.md`. Hermes loads those as instructions, not as quoted notes. `sync_diff` lists them under `review_before_pull`. `sync_now` asks Hermes for approval before it pulls or pushes. Cron, `hermes -q`, and any other non-interactive session skip the pull instead of prompting.
+- **Joining replaces this machine's memory with the herd's.** `MEMORY.md` and `USER.md` on the joining machine are replaced. The previous text is saved at `plugin-data/herd/pre-join-MEMORY.md` (and `pre-join-USER.md` when that file differed), and the join output says so. It is not merged into the herd, because publishing the merge would make every other machine adopt this machine's notes. Copy back anything you still want.
+- **API keys are not synced.** Herd does not read or write `~/.hermes/.env`, does not call `load_env_file`, and does not export provider keys through `get_secret`. Hermes has no API that can move those keys without opening the file, and a listed plugin may not open it. `hermes sync secrets on` refuses. `--sync-secrets` is ignored. An `env` item left by an older version stays ciphertext and is not applied.
+- **Encrypted before it leaves.** One 32-byte key, stretched with scrypt, used for AES-256-GCM. The store holds ciphertext of config, skills, memory and `SOUL.md`.
+- **Names are keyed hashes.** Objects are addressed by `HMAC(key, plaintext)`, so the store can't be probed by hashing guesses at a known setting.
+- **One recovery code.** Printed by `init`, reprintable with `hermes sync code`. It decrypts the store and cannot be reset — keep it in a password manager.
+- **Every payload names itself.** An object carries the item id and kind it was sealed for, so a manifest cannot point one item at another's blob.
+- **A disagreement stops, it does not ping-pong.** Each side keeps its version, records the disagreement, and stops republishing the item until one side agrees. A pull will not replace a newer local `SOUL.md` (or any other file item) with the older copy still in the store.
+- **Git, when you ask for it.** A folder store makes no network calls. A git store runs `git fetch` for status and diff (no rebase, no push), `git fetch` and `git rebase` for a pull, and `git push` only for a push. The remote is the one you configured.
+
+A store written by 1.0.2 or earlier holds unsealed objects. 1.0.3 skips them with a message rather than guessing; start a fresh store, or push once from each machine still running the old version. An `env` blob written by 1.1 is ignored.
 
 ## Commands
 
@@ -200,12 +204,12 @@ A store written by 1.0.2 or earlier holds unsealed objects. 1.0.3 skips them wit
 | `hermes sync status` / `diff` | What's in sync; what a sync would do |
 | `hermes sync scope knowledge\|profile` | Share skills and memory only, or the whole profile |
 | `hermes sync note [text]` | This machine's own paragraph in memory — never synced |
-| `hermes sync secrets on` / `off` | Include API keys in sync, or stop (off until you ask) |
+| `hermes sync secrets on` / `off` | Refuses. API keys are not synced, and `.env` is not opened |
 | `hermes sync gc [--dry-run]` | Delete store objects nothing references any more |
 | `hermes sync undo` | Restore the files from the last pull |
 | `hermes sync policy` / `code` / `leave` | The rules; the recovery code; stop syncing |
 
-The agent gets three tools with the same verbs: `sync_status`, `sync_diff`, `sync_now`.
+The agent gets three tools with the same verbs: `sync_status`, `sync_diff`, `sync_now`. Status and diff are read-only. `sync_now` goes through Hermes's approval prompt, and it does not run in cron or other non-interactive sessions.
 
 ## Limits
 

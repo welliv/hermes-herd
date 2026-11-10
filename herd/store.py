@@ -253,8 +253,13 @@ class Store:
         return max(clocks, default=0)
 
     # ── transport ────────────────────────────────────────────────────────────
-    def refresh(self) -> None:
-        """Pull the latest from the remote, if this store has one. Never fatal."""
+    def refresh(self, *, fetch_only: bool = False) -> None:
+        """Bring in the remote, if this store has one. Never fatal.
+
+        ``fetch_only`` is what status and diff use: no rebase and no push.
+        The default, used by pull, may fast-forward local history. Pushing is
+        ``publish``, and only a real push calls it.
+        """
 
     def publish(self, message: str) -> dict:
         """Commit and push. Returns {committed, pushed, detail}."""
@@ -283,13 +288,17 @@ class GitStore(Store):
         except StoreError:
             return False
 
-    def refresh(self) -> None:
+    def refresh(self, *, fetch_only: bool = False) -> None:
         if not self.root.exists() or not (self.root / ".git").exists():
             return
         if not self.has_remote():
             return
+        # fetch is the only network call a read is allowed to make. Rebase
+        # rewrites the local store; push is publish(), never this method.
+        _git(["fetch", "--quiet", "origin"], self.root)
+        if fetch_only:
+            return
         try:
-            _git(["fetch", "--quiet", "origin"], self.root)
             branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], self.root).stdout.strip() or "main"
             _git(["rebase", "--autostash", "--quiet", f"origin/{branch}"], self.root)
         except StoreError:
@@ -332,7 +341,12 @@ def clone(remote: str, dest: str | Path) -> Path:
         raise StoreError(f"{dest} already exists and is not empty.")
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        subprocess.run(["git", "clone", "--quiet", remote, str(dest)], check=True, capture_output=True, text=True)
+        # `--` so a remote that looks like a flag (`--upload-pack=...`, `-c`)
+        # is the URL, not a clone option.
+        subprocess.run(
+            ["git", "clone", "--quiet", "--", remote, str(dest)],
+            check=True, capture_output=True, text=True,
+        )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or "").strip().splitlines()
         raise StoreError(f"Could not clone {remote}: {detail[-1] if detail else 'git error'}") from exc

@@ -7,7 +7,7 @@ The question is narrow: **which tool keeps one Hermes across several machines wi
 A Hermes home holds two kinds of state:
 
 1. **Machine state** — Docker backend, working directory, webapp port, bot token, `PATH`, `DISPLAY`.
-2. **Person state** — model, skills, memory, `SOUL.md`, API keys.
+2. **Person state** — model, skills, memory, `SOUL.md`. API keys stay on the machine; Herd does not sync them.
 
 A tool that cannot tell them apart has only two moves: copy everything (and break the second machine) or copy nothing portable (and make the second machine useless). Measured on a real install: **37 of 155 config keys (24%) are machine-bound, across 12 sections** — see [`PROBLEM.md`](PROBLEM.md).
 
@@ -19,7 +19,7 @@ Six candidates, six criteria, weights summing to 100. Each cell is 1–5 (5 = be
 
 | # | Tool | Machine-bound handled | Secrets | Conflicts | Setup | Running cost | Maturity | **Score** |
 |---|---|---|---|---|---|---|---|---|
-| 1 | **Herd** (this plugin) | 5 | 5 | 5 | 5 | 4 | 2 | **89** |
+| 1 | **Herd** (this plugin) | 5 | 2 | 5 | 5 | 4 | 2 | **77** |
 | 2 | Dotfiles manager + age/SOPS (chezmoi, yadm) | 2 | 4 | 2 | 2 | 3 | 5 | **59** |
 | 3 | Syncthing / Dropbox / iCloud folder | 1 | 2 | 2 | 3 | 4 | 5 | **51** |
 | 4 | Shared home over SSH (NFS / sshfs) | 1 | 3 | 4 | 2 | 2 | 4 | **51** |
@@ -37,8 +37,8 @@ Six candidates, six criteria, weights summing to 100. Each cell is 1–5 (5 = be
 
 ## What each one is actually for
 
-**Herd — 89. Built for this job, new.**
-Per-key merge with a stored base, machine-bound paths resolved locally, encrypted store, opt-in secrets, a conflict that is a one-key choice in the terminal, `undo` on every pull. Setup is one command and a 20-character code that works once. Cost: it is a young plugin — zero public users at the time of writing, one audit cycle. The remaining gap is interface polish (no GUI), not behaviour.
+**Herd — 77. Built for this job, new.**
+Per-key merge with a stored base, machine-bound paths resolved locally, encrypted store, a conflict that is a one-key choice in the terminal, `undo` on every pull. API keys do not travel: a listed plugin may not read `~/.hermes/.env`, and that is the whole of the secrets column. Setup is one command and a 20-character code that works once. Cost: it is a young plugin — zero public users at the time of writing, one audit cycle. The remaining gap is interface polish (no GUI), not the merge.
 *Pick it when* you want Hermes to behave like one agent and you accept 1.x software.
 
 **Dotfiles manager + age/SOPS — 59. The mature incumbent, for a different job.**
@@ -79,8 +79,8 @@ One command, works instantly — and the laptop inherits the desktop's Docker so
 
 ```python
 crit  = {"machine": .25, "secrets": .20, "conflict": .15, "setup": .15, "ops": .10, "maturity": .15}
-herd  = dict(machine=5, secrets=5, conflict=5, setup=5, ops=4, maturity=2)
-score = sum(herd[k] * w for k, w in crit.items()) / 5 * 100      # 89.0
+herd  = dict(machine=5, secrets=2, conflict=5, setup=5, ops=4, maturity=2)
+score = sum(herd[k] * w for k, w in crit.items()) / 5 * 100      # 77.0
 ```
 
 Change a weight and the ordering changes with it — the point of publishing the method is that you can disagree with the arithmetic instead of the vibe.

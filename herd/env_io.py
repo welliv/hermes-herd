@@ -1,4 +1,9 @@
-"""The only place herd touches `.env`, in both directions.
+"""Line guards for environment text.
+
+Sync does not call this module. Catalog rule 11: Herd does not open
+``~/.hermes/.env``. The helpers stay so a value can be rendered and checked
+without becoming a second writer. Do not point ``write`` at the profile
+``.env`` from the sync path.
 
 A store belongs to another device, so its payload is input, not truth. Three
 guards live here so the write path cannot drift away from them:
@@ -10,8 +15,8 @@ guards live here so the write path cannot drift away from them:
   peer cannot set a key the user excluded from syncing;
 * a key the administrator pins is refused, with the same message Hermes gives.
 
-Hermes memoizes a parsed `.env` per path, so the write invalidates that cache.
-Without it a pulled key stays invisible until the gateway restarts.
+Hermes memoizes a parsed `.env` per path. ``invalidate`` drops that memo.
+Sync does not call ``write`` or ``invalidate``.
 """
 
 from __future__ import annotations
