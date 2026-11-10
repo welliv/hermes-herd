@@ -1,8 +1,8 @@
-"""Exhaustive matrix for herd 1.0.2. Every check is independent: own temp root,
+"""Exhaustive matrix for herd 1.0.3. Every check is independent: own temp root,
 own store, no shared state. A FAIL here is a finding, not a harness error — the
 details column says what actually happened.
 
-Run: python matrix.py
+Run: python audit/matrix.py
 """
 
 from __future__ import annotations
@@ -16,7 +16,11 @@ import tempfile
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+REPO = Path(__file__).resolve().parents[1]
+CORE = Path(os.environ.get("HERMES_AGENT", Path.home() / ".hermes" / "hermes-agent"))
+# The checks may not assume this checkout sits in the author's home: CI clones it
+# somewhere else and has no Hermes install at all.
+sys.path.insert(0, str(REPO))
 from herd import engine, items, store as store_mod, yamlutil, crypto  # noqa: E402
 
 RESULTS: list[tuple[str, str, bool, str]] = []
@@ -294,17 +298,26 @@ def _():
     # plugins.plugin_storage importable and change where herd keeps its state.
     val = 'say "hi" C:\\Users\\x'
     script = (
-        "import sys; sys.path[:0]=['/root/work/herd','/root/.hermes/hermes-agent']\n"
+        "import sys\n"
+        f"sys.path[:0] = [{str(REPO)!r}, {str(CORE)!r}]\n"
         "from pathlib import Path\n"
         "from herd import items\n"
-        "from agent.secret_scope import load_env_file\n"
-        "v=sys.argv[1]\n"
-        "t=items.render_env('', {'K': v}, set())\n"
-        "p=Path(sys.argv[2]); p.write_text(t)\n"
-        "got=load_env_file(p)['K']\n"
-        "print('OK' if got==v else 'BAD '+repr(got))\n")
+        "try:\n"
+        "    from agent.secret_scope import load_env_file\n"
+        "except Exception:\n"
+        "    print('SKIP'); raise SystemExit\n"
+        "v = sys.argv[1]\n"
+        "t = items.render_env('', {'K': v}, set())\n"
+        "p = Path(sys.argv[2]); p.write_text(t)\n"
+        "got = load_env_file(p)['K']\n"
+        "print('OK' if got == v else 'BAD ' + repr(got))\n")
     out = subprocess.run([sys.executable, "-c", script, val, str(Path(tempfile.mkdtemp()) / ".env")],
                          capture_output=True, text=True).stdout.strip()
+    if out == "SKIP":
+        # CI has no Hermes checkout. Fall back to herd's own round-trip so the
+        # shape of the escaping is still exercised, and say which parser ran.
+        back = items.parse_env(items.render_env("", {"K": val}, set())).get("K")
+        return back == val, "core absent; herd's parser round-trips"
     return out == "OK", out or "no output"
 
 
@@ -365,9 +378,13 @@ def _():
         items.current_platform = lambda: "macos"
         d = a / "skills" / "apple"; d.mkdir(); (d / "SKILL.md").write_text("---\nname: apple\nplatforms: [macos]\n---\nx\n")
         engine.push(engine.open_context(a))
+        # Pin the receiving side too: on a macOS runner the real platform is
+        # "macos" and the skill is legitimately ours, which says nothing about
+        # the gate. The gate is what this check is about.
+        items.current_platform = lambda: "linux"
+        engine.pull(engine.open_context(b))
     finally:
         items.current_platform = real
-    engine.pull(engine.open_context(b))
     return not (b / "skills" / "apple").exists(), f"installed={(b / 'skills' / 'apple').exists()}"
 
 
@@ -378,9 +395,11 @@ def _():
     try:
         items.current_platform = lambda: "macos"
         d = a / "skills" / "apple"; d.mkdir(); (d / "SKILL.md").write_text("---\nname: apple\nplatforms: [macos]\n---\nx\n")
-        engine.push(engine.open_context(a)); engine.pull(engine.open_context(b))
-        items.current_platform = real
+        engine.push(engine.open_context(a))
+        items.current_platform = lambda: "linux"
+        engine.pull(engine.open_context(b))
         engine.push(engine.open_context(b))
+        items.current_platform = real
         entry = engine.open_context(b).store.merged().get("skill:apple")
         return not (entry and entry.deleted), f"deleted={bool(entry and entry.deleted)}"
     finally:
@@ -536,7 +555,7 @@ def _():
 @check("concurrency", "two devices pushing at once keep both manifests")
 def _():
     root, a, b = pair()
-    script = ('import sys; sys.path.insert(0,"/root/work/herd")\n'
+    script = (f'import sys; sys.path.insert(0,{str(REPO)!r})\n'
               'from pathlib import Path\nfrom herd import engine\n'
               'h=Path(sys.argv[1])\n'
               'for i in range(10):\n'
@@ -551,7 +570,7 @@ def _():
 @check("concurrency", "two processes of the same device serialise")
 def _():
     root, a, b = pair()
-    script = ('import sys; sys.path.insert(0,"/root/work/herd")\n'
+    script = (f'import sys; sys.path.insert(0,{str(REPO)!r})\n'
               'from pathlib import Path\nfrom herd import engine\n'
               'h=Path(sys.argv[1])\n'
               'for i in range(6):\n'
@@ -566,7 +585,7 @@ def _():
 @check("concurrency", "a pull after a concurrent push is coherent")
 def _():
     root, a, b = pair()
-    script = ('import sys; sys.path.insert(0,"/root/work/herd")\n'
+    script = (f'import sys; sys.path.insert(0,{str(REPO)!r})\n'
               'from pathlib import Path\nfrom herd import engine\n'
               'h=Path(sys.argv[1])\n'
               'for i in range(10):\n'
@@ -696,7 +715,7 @@ def _():
 def _():
     import importlib.util
     root, a, b = pair()
-    spec = importlib.util.spec_from_file_location("hp", "/root/work/herd/__init__.py", submodule_search_locations=["/root/work/herd"])
+    spec = importlib.util.spec_from_file_location("hp", str(REPO / "__init__.py"), submodule_search_locations=[str(REPO)])
     mod = importlib.util.module_from_spec(spec); sys.modules["hp"] = mod; spec.loader.exec_module(mod)
     mod._AUTO_MIN_GAP_SECONDS = 0
     t0 = time.perf_counter(); mod._on_session_start(); ms = (time.perf_counter() - t0) * 1000
@@ -711,7 +730,7 @@ def main():
         print("\nfailed:")
         for s, n, d in fails:
             print(f"  [{s}] {n} — {d}")
-    Path("/root/work/herd-audit/matrix-results.json").write_text(
+    (Path(tempfile.gettempdir()) / "herd-matrix-results.json").write_text(
         json.dumps([{"section": s, "name": n, "ok": o, "detail": d} for s, n, o, d in RESULTS], indent=2))
 
 

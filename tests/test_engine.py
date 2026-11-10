@@ -173,8 +173,9 @@ def test_two_edits_to_one_skill_keep_both(herd):
     result = engine.pull(engine.open_context(herd["a"]))
     assert any(c["item"] == "skill:demo" for c in result["conflicts"])
     assert "from desktop" in (herd["a"] / "skills" / "demo" / "SKILL.md").read_text()
-    saved = [p for c in result["conflicts"] for p in [c.get("remote", "")] if "conflicts/" in p]
-    assert saved and Path(saved[0].split("saved to ")[-1]).exists()
+    ctx = engine.open_context(herd["a"])
+    saved = list((ctx.data / "conflicts").rglob("*.tar.gz"))
+    assert saved, "the other machine's version was not kept"
 
 
 def test_deleting_a_skill_propagates(herd):

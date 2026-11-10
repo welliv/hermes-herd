@@ -2,27 +2,109 @@
 
 **Two machines. One Hermes.**
 
-Your settings, skills and memory are on every machine; each machine keeps the parts that only make sense on it. One command to start, one code to join, nothing to manage afterwards.
+Settings, skills and memory follow you between machines; each machine keeps the parts that only make sense on it. One command to start, one code to join, nothing to manage afterwards.
 
 > Copying `~/.hermes` moves your Docker socket and your bot token with it. Herd moves the profile, not the machine.
 
-## Watch it (79 s, real commands)
-
 [![Herd: two machines, one Hermes](docs/media/herd-demo.gif)](docs/media/herd-demo.mp4)
 
-Nothing in that recording is staged. `demo/demo.sh` runs the same commands against two throwaway Hermes homes, and `demo/record.sh` films the terminal.
+## The short version
 
-## The problem, shown rather than described
+| | |
+|---|---|
+| **What it is** | A plugin that keeps one Hermes across your machines — the same model, skills and memory everywhere, each machine keeping its own paths, ports and bot tokens |
+| **What it fixes** | A second machine is a stranger with the same name; copying the folder to fix that moves the first machine's Docker socket and bot token with it |
+| **How it works** | One encrypted store, one recovery code, a per-key merge that knows what belongs to the machine, and a pull at session start / push at session end |
+| **What it costs** | You keep a recovery code. Sessions and cron stay put. A real conflict is shown, not guessed |
 
-A second machine is a stranger with the same name: no skills, no memory, a different model, and a `config.yaml` full of addresses that belong to the first machine. The usual fixes are worse than the problem:
+New here? [`PROBLEM.md`](docs/PROBLEM.md) is the case for it, [`COMPARISON.md`](docs/COMPARISON.md) ranks it against every other way to do this, and [`DEMO.md`](docs/DEMO.md) is the 79-second film, shot by shot.
 
-- **Copy the folder** and the laptop runs commands in the desktop's Docker socket, binds the desktop's ports, and answers the same Telegram messages.
-- **Copy `.env`** and your keys end up in a cloud folder or a git history. A published sync tool did exactly this once — its author's words: *"it read the .env file and posted the contents to slack."*
-- **Sync the whole directory** and a genuine collision is resolved by whoever wrote last, silently.
+## In the wild
 
-Herd's answer: merge the profile per key, encrypt what leaves, keep machine-bound values where they belong, and say so when two machines really disagree.
+**Laptop and a VPS.** You work from the laptop; the VPS runs the always-on agent. Install on both, `init` on the VPS, `join` on the laptop. The laptop answers with the same memory and the same skills, while the VPS keeps its daemon socket and the laptop keeps its own working directory. Edit a skill on the train; it is on the VPS at the next session start.
 
-## Try it in 60 seconds
+**Desktop plus a travel laptop.** The desktop has the big model and the local models; the travel laptop is a thin client. Settings follow, so it is the same agent — but the travel laptop does not inherit a Docker backend it cannot run, and its bot token does not start answering for the desktop.
+
+**A replacement machine.** `join` with the code and the profile comes back in one command: memory, skills, `SOUL.md`, config, and the keys if you turned them on. The values you set again are the ones that belong to the new machine anyway.
+
+The common shape: **you stop choosing which machine to work on.** Every machine is the agent; only the plumbing differs.
+
+## The problem, in numbers
+
+- **24% of a real config is machine-bound** — 37 of 155 leaf keys across 12 sections. Copy them and the laptop runs commands in the desktop's Docker socket, binds its port, and answers its Telegram messages.
+- **Secrets are all or nothing in a file sync.** Skip `.env` and you retype every key; include it and it lands in a cloud folder or a git history. A published sync tool did exactly that once: *"it read the .env file and posted the contents to slack."*
+- **File sync keeps the last write.** Two machines editing the same setting is not an edge case, it is Tuesday. One edit disappears and nothing says so.
+
+The measured detail, including the four prior attempts that all move files: [`PROBLEM.md`](docs/PROBLEM.md).
+
+## What it solves
+
+| Problem | Without Herd | With Herd |
+|---|---|---|
+| Second machine is empty | Retype keys, reinstall skills, re-teach memory | `join` with the code, once |
+| Machine-bound settings | Copied and wrong, or excluded and missing | Resolved to each machine's own value |
+| Secrets | Plaintext in a cloud folder, or never synced | Encrypted before they leave; off until you ask |
+| Simultaneous edits | Last write wins, silently | Both kept, the disagreement recorded, the item frozen until one side agrees |
+| A mistake | Restore from a backup you may not have | `hermes sync undo` |
+
+## How it works
+
+```
+        desktop                          laptop
+   ┌──────────────┐                ┌──────────────┐
+   │ config.yaml  │                │ config.yaml  │
+   │ skills/      │                │ skills/      │
+   │ memories/    │                │ memories/    │
+   │ .env         │                │ .env         │
+   └──────┬───────┘                └──────┬───────┘
+          │   merge per key, base = last agreed   │
+          └────────────────┬──────────────────────┘
+                           ▼
+                 ┌───────────────────┐
+                 │  encrypted store  │  folder, git, Dropbox, USB
+                 │  ciphertext only  │  one recovery code opens it
+                 └───────────────────┘
+```
+
+1. **`init`** creates the store, seals this machine's items, and prints one recovery code (`HERD-…`).
+2. **`join`** on the next machine adopts the herd on its first pull.
+3. From then on a session-start hook pulls and a session-end hook pushes: a background thread, at most once every two minutes, a couple of milliseconds of hook.
+
+Each device writes exactly one manifest, so two machines pushing at once cannot clobber each other. Items are content-addressed and encrypted, and every change records the entry it was built on — that is how a fast-forward is told from a real disagreement.
+
+`config.yaml` merges per key against the last **agreed** snapshot:
+
+```
+local == remote   keep it
+local == base     take remote      only they changed it
+remote == base    keep local       only you changed it
+all three differ  keep local, record both, stop republishing
+```
+
+Machine-bound paths are resolved to the local value *before* that comparison — including when the remote payload omits them — so a pull cannot delete the section your machine is running on.
+
+## How it improves Hermes
+
+- **The surfaces stop competing.** CLI, TUI, desktop, webapp, 21+ messaging platforms: without shared state each one boots a different agent, and a new surface loses to the first one. With it, they are the same agent in different windows.
+- **The catalog becomes portable.** Skills, automations and connectors are per-host today; make state portable once and every plugin that stores state inherits it.
+- **The agent can answer for itself.** Three tools — `sync_status`, `sync_diff`, `sync_now` — so "am I in sync?" is a question Hermes answers, not a command you have to remember.
+- **Nothing runs in the background.** No daemon, no port, no server. The store is a folder; if you can back up a folder you can run this.
+- **It is reversible.** Every pull leaves a backup, and `hermes sync undo` puts the files back.
+
+## How it compares
+
+| Tool | Machine-bound keys | Secrets | Conflicts | Score |
+|---|---|---|---|---|
+| **Herd** | Modelled per key | Encrypted, opt-in | Kept, recorded, frozen | **83** |
+| Dotfiles + age/SOPS | Hand-written templates | Encrypted in git | Git conflict, by hand | 59 |
+| Syncthing / Dropbox | Copied over each other | Provider-side, plaintext | Conflict copies, `.db` corruption | 51 |
+| Shared home over SSH | One config for all hosts | Stays on the server | None to resolve | 51 |
+| `hermes profile export/import` | Whole archive | Whole archive | None — one-way | 46 |
+| Copy `~/.hermes` | Copied, breaks the host | Leaks or is skipped | Last write wins | 45 |
+
+Full method, weights and per-tool verdicts — including when *not* to use Herd: [`COMPARISON.md`](docs/COMPARISON.md).
+
+## Install
 
 ```bash
 # both machines
@@ -46,9 +128,7 @@ Joined the herd as laptop.
   adopted 1 value(s) from the store: model.default
 ```
 
-Both machines now run the same agent — same model, same skills, same memory — and the laptop kept its own Docker path and port. From then on it pulls when a session starts and pushes when it ends: a couple of milliseconds of hook, the work in a background thread, at most once every two minutes.
-
-Hermes 0.23+. Git only if you want a git-backed store.
+Both machines now run the same agent — same model, same skills, same memory — and the laptop kept its own Docker path and port. Hermes 0.23+. Git only if you want a git-backed store.
 
 ## What moves
 
@@ -67,8 +147,8 @@ The rules are data, not code: `hermes sync policy` prints them, and each is one 
 - **One recovery code.** Printed by `init`, reprintable with `hermes sync code`. It decrypts everything and cannot be reset — keep it in a password manager.
 - **Every payload names itself.** An object carries the item id and kind it was sealed for, so a manifest cannot point the config item at the secrets blob, and a repeated object cannot be replayed as another item.
 - **Credentials are opt-in.** Until you run `hermes sync secrets on`, nothing reads `.env` on either side: the file is not opened, and a peer's keys are left in the store untouched.
-- **A disagreement stops, it does not ping-pong.** When both machines changed the same item, each keeps its version, records the disagreement, and stops republishing it until one side agrees. `hermes sync conflicts` shows both.
-- **A peer cannot widen your rules.** The skip list binds in both directions: a key this machine excludes is neither sent nor accepted, a key name has to be a plain environment name before it can become a line, and a key an administrator pinned is left to the administrator.
+- **A disagreement stops, it does not ping-pong.** Each side keeps its version, records the disagreement, and stops republishing the item until one side agrees.
+- **A peer cannot widen your rules.** The skip list binds in both directions; a key name must be a plain environment name before it can become a line; every `.env` write goes through Hermes's own check and then re-reads the file.
 
 A store written by 1.0.2 or earlier holds unsealed objects. 1.0.3 skips them with a message rather than guessing; start a fresh store, or push once from each machine still running the old version.
 
@@ -88,24 +168,9 @@ A store written by 1.0.2 or earlier holds unsealed objects. 1.0.3 skips them wit
 
 The agent gets three tools with the same verbs: `sync_status`, `sync_diff`, `sync_now`.
 
-## How it works
-
-Each device writes exactly one manifest, `devices/<device>.json`, so two machines pushing at once cannot clobber each other. Items are content-addressed and encrypted; every change records the entry it was built on, which is how a fast-forward is told from a genuine disagreement.
-
-`config.yaml` is merged per key against the last **agreed** snapshot:
-
-```
-local == remote   keep it
-local == base     take remote      only they changed it
-remote == base    keep local       only you changed it
-all three differ  keep local, record both, stop republishing
-```
-
-Machine-bound paths are resolved to the local value before that comparison — including when the remote payload doesn't contain them at all, which is why a pull can't delete the section your machine is running on.
-
 ## Limits
 
-- Sessions don't sync. Deliberate, see the table above.
+- Sessions don't sync, and cron is off by default. Deliberate, see the table above.
 - Losing the recovery code loses the store. That is the cost of having no custodian.
 - A genuine conflict is shown, not guessed — and resolved by an edit, not a button (yet).
 - The store keeps every version it ever wrote; `hermes sync gc` prunes what nothing references, and old backups and conflict archives with it.
@@ -117,8 +182,11 @@ No account. No hosted service. No telemetry. It does not back up your sessions, 
 
 ## Docs
 
-- [`docs/PROBLEM.md`](docs/PROBLEM.md) — the measured case for per-key sync
-- [`docs/AUDIT.md`](docs/AUDIT.md) — every claim above, mapped to the test that proves it
-- [`docs/DEMO.md`](docs/DEMO.md) — the 79-second demo: shot list, timings, and how to re-record it
+| | |
+|---|---|
+| [`docs/PROBLEM.md`](docs/PROBLEM.md) | The measured case for per-key sync, and why Hermes needs it |
+| [`docs/COMPARISON.md`](docs/COMPARISON.md) | Six ways to do this, weighted and ranked, with when to choose each |
+| [`docs/DEMO.md`](docs/DEMO.md) | The 79-second demo: shot list, timings, how to re-record it |
+| [`docs/AUDIT.md`](docs/AUDIT.md) | Every claim above, mapped to the test that proves it |
 
 MIT.
