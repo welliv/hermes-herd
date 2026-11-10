@@ -7,6 +7,7 @@ Run: python fuzz2.py [histories] [seed]
 from __future__ import annotations
 
 import json
+import os
 import random
 import shutil
 import sys
@@ -61,6 +62,24 @@ def env_of(h: Path) -> dict:
     return items.parse_env(p.read_text()) if p.exists() else {}
 
 
+
+def _snap(h: Path) -> str:
+    try:
+        ctx = engine.open_context(h)
+        b = json.loads((ctx.data / "base.json").read_text())
+        out = []
+        for item in ("skill:s1", "skill:s2"):
+            bi = (b.get("items") or {}).get(item) or {}
+            pu = (b.get("pushed") or {}).get(item) or {}
+            m = ctx.store.merged().get(item)
+            f = h / "skills" / item.split(":")[1] / "SKILL.md"
+            out.append(f"{item[-2:]} local={(f.read_text().splitlines()[-1] if f.exists() else None)!r} "
+                       f"base={str(bi.get('oid'))[:6]}/{bi.get('rev')} pushed={str(pu.get('oid'))[:6]}/{pu.get('rev')} "
+                       f"merged={None if not m else (m.oid[:6], m.rev, m.deleted, m.parent_rev)}")
+        return " | ".join(out)
+    except Exception as exc:  # noqa: BLE001
+        return f"[snap failed: {type(exc).__name__}]"
+
 def history(rng: random.Random, root: Path) -> tuple[bool, str]:
     names = ["a", "b", "c", "d"][: rng.choice([3, 4])]
     homes = [home(root, n) for n in names]
@@ -69,6 +88,7 @@ def history(rng: random.Random, root: Path) -> tuple[bool, str]:
     for h, n in zip(homes[1:], names[1:]):
         engine.join(h, str(root / "store"), code, name=n, sync_secrets=True)
 
+    trace = []
     for _ in range(rng.randint(10, 20)):
         h = rng.choice(homes)
         op = rng.choice(["cfg", "cfg", "del", "skill", "skill", "delskill", "memory", "env",
@@ -94,12 +114,22 @@ def history(rng: random.Random, root: Path) -> tuple[bool, str]:
                 engine.pull(engine.open_context(h))
             elif op == "sync":
                 engine.sync(h)
+            trace.append(f"{h.name}:{op}")
+            if os.environ.get("TRACE"):
+                trace[-1] += " " + _snap(h)
         except Exception as exc:  # noqa: BLE001
             return False, f"op {op} raised {type(exc).__name__}: {exc}"
 
-    for _ in range(8):
+    skipped_notes = []
+    for round_no in range(8):
         for h in homes:
-            engine.sync(h)
+            r = engine.sync(h)
+            if os.environ.get("TRACE"):
+                trace.append(f"settle{round_no}:{h.name}:sync {_snap(h)}")
+            for phase in ("first", "second"):
+                for note in (r.get(phase) or {}).get("skipped", []) or []:
+                    if "s2" in str(note):
+                        skipped_notes.append(f"{h.name}:{note}")
 
     problems = []
     conflicts = sum(len(engine.conflicts(h)) for h in homes)
@@ -137,12 +167,45 @@ def history(rng: random.Random, root: Path) -> tuple[bool, str]:
                 except Exception as exc:  # noqa: BLE001
                     problems.append(f"{iid}: unreadable ({type(exc).__name__})")
 
+    if problems:
+        try:
+            m = engine.open_context(homes[0]).store.merged().get("skill:s2")
+            m1 = engine.open_context(homes[0]).store.merged().get("skill:s1")
+            problems.append(f"merged s1={None if not m1 else (m1.oid[:8], m1.rev, m1.deleted, m1.parent_rev)}")
+            problems.append(f"merged s2={None if not m else (m.oid[:8], m.rev, m.deleted, m.parent_rev, m.parent_dev[:4])}")
+            for h in homes:
+                f = h / "skills" / "s2" / "SKILL.md"
+                problems.append(f"{h.name}: conflicts={len(engine.conflicts(h))} s2={(f.read_text().splitlines()[-1] if f.exists() else None)!r}")
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"diag failed: {exc}")
+        try:
+            problems.append(f"skipnotes={skipped_notes[-4:]}")
+            orig = engine._decision
+            seen = []
+            def spy(l, b, pr, e):
+                r = orig(l, b, pr, e)
+                if e.item_id == "skill:s2":
+                    seen.append(f"decision={r} local={str(l)[:8]} base={str((b or {}).get('oid'))[:8]} "
+                                f"pushed={str((pr or {}).get('oid'))[:8]} parent=({e.parent_rev},{e.parent_dev[:4]})")
+                return r
+            engine._decision = spy
+            try:
+                rr = engine.pull(engine.open_context(homes[0]))
+            finally:
+                engine._decision = orig
+            problems.append(f"replay applied={rr['applied']} skipped={[x for x in rr.get('skipped', []) if 's2' in str(x)][:2]}")
+            problems.extend(seen)
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"replay failed: {exc}")
+
     # containment
     for p in root.rglob("*"):
         if p.is_file() and p.relative_to(root).parts[0] not in set(names) | {"store"}:
             problems.append(f"escaped file {p.relative_to(root)}")
 
-    return not problems, "; ".join(problems[:3])
+    if problems and os.environ.get("TRACE"):
+        print("\n".join(trace[-18:]))
+    return not problems, "; ".join(problems) + (" | ops=" + " ".join(trace) if problems else "")
 
 
 def main() -> int:
