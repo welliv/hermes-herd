@@ -959,7 +959,7 @@ def conflicts(home: Path) -> list[dict]:
     if not entries:
         return []
     try:
-        live = yamlutil.safe_load((Path(home) / "config.yaml").read_text()) or {}
+        live = yamlutil.safe_load((Path(home) / "config.yaml").read_text(encoding="utf-8")) or {}
     except Exception:
         return entries
     settled = []

@@ -9,6 +9,9 @@ jobs:
   test:
     name: ${{ matrix.os }} · py${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
+    env:
+      # Windows runners default to cp1252; these harnesses write UTF-8 text.
+      PYTHONUTF8: "1"
     strategy:
       fail-fast: false
       matrix:
