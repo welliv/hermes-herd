@@ -6,9 +6,9 @@ Settings, skills and memory follow you between machines; each machine keeps the 
 
 > Copying `~/.hermes` moves your Docker socket and your bot token with it. Herd moves the profile, not the machine.
 
-[![Herd: two machines, one Hermes](docs/media/herd-demo.gif)](docs/media/herd-demo.mp4)
+[![Herd: two machines, one Hermes](docs/media/herd-explainer.gif)](docs/media/herd-explainer.mp4)
 
-*89 seconds, real commands: pairing, the machine-bound split, a conflict settled with one key, undo. The film is the 1.1 cut and still shows API keys travelling; 1.2 does not sync keys.*
+*85 seconds, with narration: why a second machine drifts, why copying `~/.hermes` breaks it, and herd 1.2 doing the fix for real — pairing with a one-time code, a skill and a memory note arriving on the laptop, each machine keeping its own folder and port, and undo. API keys never leave the machine.*
 
 ## The short version
 
@@ -19,7 +19,7 @@ Settings, skills and memory follow you between machines; each machine keeps the 
 | **How it works** | One encrypted store, one short pairing code, a per-key merge that knows what belongs to the machine, and a pull at session start / push at session end |
 | **What it costs** | You keep the recovery code in a password manager (the pairing code is only for the other machine). Sessions and cron stay put. A real conflict is shown, then one key settles it |
 
-New here? [`PROBLEM.md`](docs/PROBLEM.md) is the case for it, [`COMPARISON.md`](docs/COMPARISON.md) ranks it against every other way to do this, and [`DEMO.md`](docs/DEMO.md) is the 89-second film, shot by shot.
+New here? [`PROBLEM.md`](docs/PROBLEM.md) is the case for it, [`COMPARISON.md`](docs/COMPARISON.md) ranks it against every other way to do this, and [`DEMO.md`](docs/DEMO.md) is the 85-second film, scene by scene.
 
 ## In the wild
 
@@ -229,7 +229,7 @@ No account. No hosted service. No telemetry. It does not back up your sessions, 
 |---|---|
 | [`docs/PROBLEM.md`](docs/PROBLEM.md) | The measured case for per-key sync, and why Hermes needs it |
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | Six ways to do this, weighted and ranked, with when to choose each |
-| [`docs/DEMO.md`](docs/DEMO.md) | The 89-second demo: shot list, timings, how to re-record it |
+| [`docs/DEMO.md`](docs/DEMO.md) | The 85-second explainer: storyboard, narration, how the terminal shots were made |
 | [`docs/AUDIT.md`](docs/AUDIT.md) | Every claim above, mapped to the test that proves it |
 
 MIT.
