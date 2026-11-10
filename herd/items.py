@@ -345,7 +345,10 @@ def scan(home: Path, policy: Policy, include_cron: bool = False) -> dict[str, Lo
         if path.exists():
             raw = path.read_bytes()
             text = raw.decode("utf-8", "ignore")
-            payload = raw
+            # Newlines are normalised: a CRLF file and an LF file are the same
+            # memory, or Windows and Linux would disagree about every edit.
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
+            payload = text.encode("utf-8")
             if LOCAL_BEGIN in text:
                 shared, _block = split_local_block(text)
                 payload = shared.encode("utf-8")
@@ -355,8 +358,9 @@ def scan(home: Path, policy: Policy, include_cron: bool = False) -> dict[str, Lo
 
     soul = home / "SOUL.md"
     if soul.exists():
+        text = soul.read_bytes().decode("utf-8", "ignore").replace("\r\n", "\n").replace("\r", "\n")
         items["file:soul"] = LocalItem(
-            item_id="file:soul", kind="file", payload=soul.read_bytes(), mtime=soul.stat().st_mtime
+            item_id="file:soul", kind="file", payload=text.encode("utf-8"), mtime=soul.stat().st_mtime
         )
 
     here = current_platform()
