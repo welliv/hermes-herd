@@ -202,6 +202,27 @@ class Store:
                 out.append(data)
         return out
 
+    def entries_by_item(self) -> dict[str, list[Entry]]:
+        """Every device's entry for each item — a winner hides the loser."""
+        out: dict[str, list[Entry]] = {}
+        for path in sorted((self.root / "devices").glob("*.json")):
+            data = read_json(path, {}) or {}
+            dev = str((data.get("device") or {}).get("id") or path.stem)
+            for item_id, raw in (data.get("items") or {}).items():
+                try:
+                    entry = Entry(
+                        item_id=item_id, oid=raw.get("oid", ""), kind=raw.get("kind", "file"),
+                        rev=int(raw.get("rev", 0)), device_id=dev,
+                        mtime=float(raw.get("mtime") or 0), size=int(raw.get("size") or 0),
+                        deleted=bool(raw.get("deleted")),
+                        parent_rev=int(raw.get("parent_rev") or 0),
+                        parent_dev=str(raw.get("parent_dev") or ""),
+                    )
+                except (TypeError, ValueError):
+                    continue
+                out.setdefault(item_id, []).append(entry)
+        return out
+
     def merged(self) -> dict[str, Entry]:
         """Newest entry per item across every device manifest."""
         best: dict[str, Entry] = {}

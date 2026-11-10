@@ -51,6 +51,15 @@ def _decision(local_oid: str, base_row: dict | None, pushed_row: dict | None, en
     if local_oid and local_oid == entry.oid:
         return "same"
     if base_row.get("rev") and str(entry.oid or "") == str(base_row.get("oid") or ""):
+        # They still hold the agreed value. If we changed it without publishing
+        # something that outranks the herd, this is a disagreement, not a
+        # private edit — otherwise both sides republish forever.
+        if local_oid != str(base_row.get("oid") or ""):
+            pushed_rev = int(pushed_row.get("rev") or 0)
+            # Only a *published* change can lose to a newer herd revision. An
+            # unpublished edit is simply this machine's news to send.
+            if pushed_rev and int(entry.rev) > pushed_rev:
+                return "conflict"
         return "local"                       # only this side changed it: no conflict
     if local_oid == str(base_row.get("oid") or ""):
         # Unchanged here. Take theirs only when theirs descends from the entry we
@@ -321,7 +330,10 @@ def push(ctx: Context) -> dict:
         changed, unchanged, removed = [], [], []
         left: set[str] = set(local)
 
+        frozen = set(ctx.state.get("frozen") or [])
         for item_id, item in local.items():
+            if item_id in frozen:
+                continue                          # a disagreement the person must settle
             oid = ctx.store.put(ctx.key, item.payload)
             previous = (base.get("items") or {}).get(item_id) or {}
             own = my_items.get(item_id)
@@ -418,11 +430,21 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
         base_items = dict(base.get("items") or {})
         applied, skipped, conflicts, removed = [], [], [], []
         deferred: list[str] = []
+        resolved: set[str] = set()
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
         first = bool(ctx.state.pop("first_pull", False))
+        frozen = set(ctx.state.get("frozen") or [])
+        pushed_map = base.get("pushed") or {}
+
+        def freeze(item_id: str) -> None:
+            """Hold a published disagreement still; never hold an unpublished edit."""
+            if (pushed_map.get(item_id) or {}).get("rev"):
+                frozen.add(item_id)
+
         write_json(ctx.data / "state.json", ctx.state)
 
         local = items_mod.scan(ctx.home, ctx.policy, include_cron=bool(ctx.state.get("sync_cron")))
+        by_item = ctx.store.entries_by_item()
         for item_id, entry in sorted(merged.items()):
             if entry.device_id == ctx.device["id"]:
                 continue
@@ -432,6 +454,34 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 continue
 
             record_base = True
+            local_item = local.get(item_id)
+            local_oid = crypto.object_id(ctx.key, local_item.payload) if local_item else ""
+            base_oid = str((base_items.get(item_id) or {}).get("oid") or "")
+
+            if item_id in frozen and local_oid != entry.oid:
+                conflicts.append({"item": item_id, "path": item_id, "kept": "local",
+                                  "local": "kept this machine's version",
+                                  "remote": "an unresolved disagreement on another machine"})
+                continue
+
+            # A value this device published may outrank a peer's edit, which hides
+            # the disagreement behind the winner. Look at every device's entry: a
+            # rival that is neither ours nor the agreed value is a conflict.
+            if local_oid != base_oid:
+                rivals = [e for e in by_item.get(item_id, [])
+                          if e.device_id != ctx.device["id"]
+                          and e.oid not in ("", local_oid, base_oid, entry.oid)]
+                if rivals:
+                    freeze(item_id)
+                    conflicts.append({"item": item_id, "path": item_id, "kept": "local",
+                                      "local": "kept this machine's version",
+                                      "remote": f"another machine also changed it ({rivals[0].device_id[:6]})"})
+                    continue
+            if entry.deleted and local_oid and local_oid != base_oid:
+                freeze(item_id)
+                conflicts.append({"item": item_id, "path": item_id, "kept": "local",
+                                  "local": "kept this machine's version", "remote": "another machine deleted it"})
+                continue
 
             if entry.deleted:
                 if _remove_item(ctx, item_id, stamp):
@@ -456,6 +506,9 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 if first and decision == "conflict":
                     decision = "adopt"
                 if decision in ("same", "local"):
+                    if decision == "same":
+                        frozen.discard(item_id)
+                        resolved.add(item_id)
                     base_items[item_id] = _row(entry)
                     base["config"] = json.loads(body.decode()) if body else {}
                     continue
@@ -467,6 +520,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 if result["changed"]:
                     applied.append(item_id)
                 if decision == "adopt":
+                    resolved.add(item_id)
                     base["config"] = result["remote"]
             elif entry.kind == "env":
                 if not ctx.policy.sync_secrets:
@@ -481,6 +535,9 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 if first and decision == "conflict":
                     decision = "adopt"
                 if decision in ("same", "local"):
+                    if decision == "same":
+                        frozen.discard(item_id)
+                        resolved.add(item_id)
                     base_items[item_id] = _row(entry)
                     base["env"] = json.loads(body.decode()) if body else {}
                     continue
@@ -493,6 +550,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 if result["changed"]:
                     applied.append(item_id)
                 if decision == "adopt":
+                    resolved.add(item_id)
                     base["env"] = result["remote"]
             elif entry.kind == "skill":
                 platforms = items_mod.skill_platforms_from_blob(body)
@@ -508,6 +566,9 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 if first and decision == "conflict":
                     decision = "adopt"
                 if decision in ("same", "local"):
+                    if decision == "same":
+                        frozen.discard(item_id)
+                        resolved.add(item_id)
                     base_items[item_id] = _row(entry)
                     continue
                 if decision == "conflict":
@@ -529,6 +590,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                         _apply_skill(ctx, item_id, body, stamp)
                         applied.append(item_id)
                     except Exception as exc:  # noqa: BLE001 - a bad skill is one item
+                        record_base = False          # retry next pull instead of claiming it landed
                         skipped.append(f"{item_id}: {type(exc).__name__}: {exc}")
             elif entry.kind == "memory":
                 name = items_mod.MEMORY_FILES.get(item_id)
@@ -542,10 +604,14 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 if first and decision == "conflict":
                     decision = "adopt"          # a machine joining takes the herd's memory
                 if decision in ("same", "local"):
+                    if decision == "same":
+                        frozen.discard(item_id)
+                        resolved.add(item_id)
                     base_items[item_id] = _row(entry)
                     continue
                 if decision == "conflict":
                     record_base = False
+                    freeze(item_id)
                     conflicts.append({"item": item_id, "path": item_id,
                                       "local": "kept this machine's text",
                                       "remote": "store has another version", "kept": "local"})
@@ -556,6 +622,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                     atomic_write(dest, body, mode=0o600)
                     applied.append(item_id)
                 except Exception as exc:  # noqa: BLE001 - one item must not stop the pull
+                    record_base = False
                     skipped.append(f"{item_id}: {type(exc).__name__}: {exc}")
             elif entry.kind == "file":
                 name = FILE_TARGETS.get(item_id)
@@ -568,6 +635,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                     atomic_write(dest, body, mode=dest.stat().st_mode & 0o777 if dest.exists() else 0o600)
                     applied.append(item_id)
                 except Exception as exc:  # noqa: BLE001
+                    record_base = False
                     skipped.append(f"{item_id}: {type(exc).__name__}: {exc}")
 
             if record_base:
@@ -580,7 +648,8 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
         base_doc["saved_at"] = now()
         write_json(ctx.data / "base.json", base_doc)
 
-        _record_conflicts(ctx, conflicts)
+        _record_conflicts(ctx, conflicts, resolved)
+        ctx.state["frozen"] = sorted(frozen)
         ctx.state["last_pull"] = now()
         ctx.state["last_sync"] = now()
         write_json(ctx.data / "state.json", ctx.state)
@@ -905,7 +974,7 @@ def conflicts(home: Path) -> list[dict]:
     return settled
 
 
-def _record_conflicts(ctx: Context, found: list[dict]) -> None:
+def _record_conflicts(ctx: Context, found: list[dict], resolved: set[str] | None = None) -> None:
     """Record the disagreements the last pull actually met.
 
     Not an append-only log: once the two sides agree again the entry has to go,
@@ -914,8 +983,15 @@ def _record_conflicts(ctx: Context, found: list[dict]) -> None:
     """
     path = ctx.data / "conflicts.json"
     stamp = iso()
-    entries = [dict(row, at=stamp) for row in found]
-    write_json(path, {"entries": entries[-200:]})
+    resolved = resolved or set()
+    previous = [row for row in ((read_json(path, {}) or {}).get("entries") or [])
+                if row.get("item") not in resolved]
+    merged: dict[tuple, dict] = {}
+    for row in previous:
+        merged[(row.get("item"), row.get("path"))] = row
+    for row in found:
+        merged[(row.get("item"), row.get("path"))] = dict(row, at=stamp)
+    write_json(path, {"entries": list(merged.values())[-200:]})
 
 
 def sync(home: Path) -> dict:
