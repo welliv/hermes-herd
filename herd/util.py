@@ -9,6 +9,7 @@ import os
 import socket
 import tempfile
 import time
+import time
 from pathlib import Path
 
 try:  # Hermes ships this for every profile-aware path decision.
@@ -60,6 +61,24 @@ def default_device_name() -> str:
     return name or "hermes"
 
 
+def _replace(tmp: str, path: Path, attempts: int = 12, delay: float = 0.05) -> None:
+    """Rename over the target, retrying while Windows holds the old handle.
+
+    POSIX replaces atomically even while another process has the file open;
+    Windows refuses with ``WinError 5`` until that reader closes it. Three
+    machines syncing at once is exactly the case that trips it, so wait for the
+    peer's read to finish instead of failing the sync.
+    """
+    for attempt in range(attempts):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay * (attempt + 1))
+
+
 def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
     """Write via a sibling temp file + rename so a crash never leaves half a file."""
     path = Path(path)
@@ -71,7 +90,7 @@ def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         os.chmod(tmp, mode)
-        os.replace(tmp, path)
+        _replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)

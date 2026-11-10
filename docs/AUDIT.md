@@ -5,7 +5,7 @@ here so a claim without one can be deleted rather than believed.
 
 Five suites, all run in CI:
 
-- `python -m pytest tests -q` — **79 passed** (unit, two-device end-to-end, pairing, conflict resolution).
+- `python -m pytest tests -q` — **81 passed** (unit, two-device end-to-end, pairing, conflict resolution).
 - `python audit/matrix.py` — **55 checks**: crypto, merge orderings, env, items,
   forged stores, concurrency, surface, cost.
 - `python audit/fuzz.py` — randomised three-device histories: edits, pushes,
