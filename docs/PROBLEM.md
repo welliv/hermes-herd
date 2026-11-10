@@ -2,7 +2,7 @@
 
 ## One sentence
 
-Hermes accumulates its value on the machine it runs on — memory, skills, config, keys — so a second device starts as a stranger, and the accumulated value never compounds across the surfaces Hermes already ships.
+Hermes accumulates its value on the machine it runs on — memory, skills, config, keys — so a second device is a stranger with the same name, and copying the folder makes it a clone with the first machine's Docker socket and bot token.
 
 ## Evidence, not anecdote
 
