@@ -69,18 +69,18 @@ printf 'DEMO_KEY=herd-demo-123\n' > "$ROOT/laptop/.env"
 cmd "$LAPTOP hermes sync"
 cmd "$DESK hermes sync"
 cmd "grep DEMO_KEY $ROOT/desk/.env"
-hold 2
+hold 1
 dim "The store only ever holds ciphertext."
 cmd "grep -r 'herd-demo-123' $STORE || echo '(no plaintext in the store)'"
 
 printf "\033[2J\033[H"
 say "And it can always be undone."
 cmd "$DESK hermes sync undo"
-hold 1
+hold 0.5
 cmd "grep DEMO_KEY $ROOT/desk/.env || echo '(restored: the key is gone again)'"
-hold 2
+hold 1
 
 printf "\033[2J\033[H"
 printf "\n${G} Same agent. Different machines.${R}\n"
 dim "hermes sync — pull, merge, push. Nothing else to manage."
-hold 3
+hold 1.5

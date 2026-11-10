@@ -1,12 +1,12 @@
-# The 92-second demo
+# The 89-second demo
 
 This is a **screen recording**, not a re-typeset render. `demo/record.sh` opens
 a terminal on a headless display, runs `demo/demo.sh` against two throwaway
 Hermes homes, and films the display with `ffmpeg`. Every line on screen was
 printed by the real CLI, in the order you see it.
 
-**Film:** `docs/media/herd-demo.mp4` — 1280×720, 92 s, 696 KB, no audio
-**Loop:** `docs/media/herd-demo.gif` — 880 px, 759 KB
+**Film:** `docs/media/herd-demo.mp4` — 1280×720, 89 s, 712 KB, no audio
+**Loop:** `docs/media/herd-demo.gif` — 880 px, 717 KB
 **Poster:** `docs/media/poster.png`
 
 It has no audio track on purpose: it is watched muted, and a music bed under a
@@ -19,13 +19,13 @@ terminal is noise. If you publish it with narration, use the script below.
 | 0:00 | **Two machines. One Hermes.** · `ls desk/skills` → `deploy research writer` · `ls laptop/skills` → *(nothing)* · laptop `cwd: /srv/laptop/work`, `port: 9131` | The second machine is a stranger with the same name |
 | 0:07 | `hermes sync pair ~/hd/store --name desktop` → `Ready to pair`, one 20-character code, `works once, for 15 minutes` | One command starts the herd, and the code is short enough to type on a phone |
 | 0:13 | `hermes sync pair --code XXXX-… --name laptop` → `Paired with desktop`, `pulled 6 item(s)`, `In sync · 2 machines · synced just now` | One paste, and the laptop is the same agent |
-| 0:20 | `ls laptop/skills` → the same three skills | It really arrived |
-| 0:27 | laptop `cwd: /srv/laptop/work`, `port: 9131` · desktop `cwd: /home/desk/work`, `port: 9120` | It did **not** copy the machine |
-| 0:36 | both machines change `display.skin` → `hermes sync conflicts` shows `1 this machine "laptop"` / `2 the store "desk"` → `--take theirs` → `In sync` | A disagreement is a choice, not a merge conflict |
-| 0:54 | `hermes sync secrets on` on both → write `DEMO_KEY` on the laptop → sync → `grep DEMO_KEY desk/.env` finds it | Credentials are opt-in and they travel |
-| 1:07 | `grep -r herd-demo-123 ~/hd/store` → `(no plaintext in the store)` | Encrypted before it leaves |
-| 1:19 | `hermes sync undo` → `grep DEMO_KEY desk/.env` → key gone | Every pull is reversible |
-| 1:29 | **Same agent. Different machines.** — `hermes sync`: pull, merge, push | The whole product in one line |
+| 0:19 | `ls laptop/skills` → the same three skills | It really arrived |
+| 0:26 | laptop `cwd: /srv/laptop/work`, `port: 9131` · desktop `cwd: /home/desk/work`, `port: 9120` | It did **not** copy the machine |
+| 0:35 | both machines change `display.skin` → `hermes sync conflicts` shows `1 this machine "laptop"` / `2 the store "desk"` → `--take theirs` → `In sync` | A disagreement is a choice, not a merge conflict |
+| 0:53 | `hermes sync secrets on` on both → write `DEMO_KEY` on the laptop → sync → `grep DEMO_KEY desk/.env` finds it | Credentials are opt-in and they travel |
+| 1:05 | `grep -r herd-demo-123 ~/hd/store` → `(no plaintext in the store)` | Encrypted before it leaves |
+| 1:17 | `hermes sync undo` → `grep DEMO_KEY desk/.env` → key gone | Every pull is reversible |
+| 1:25 | **Same agent. Different machines.** — `hermes sync`: pull, merge, push | The whole product in one line |
 
 ## Narration (if you post it with sound)
 
@@ -69,10 +69,10 @@ Requires a running Bot Screen (`DISPLAY=:20`) with `xfce4-terminal` and `ffmpeg`
 
 ```bash
 bash demo/setup.sh /tmp/hd                 # two homes, plugin enabled in each
-bash demo/record.sh /tmp/demo-raw.mp4      # films 115 s at 1440×900, trimmed to 92
+bash demo/record.sh /tmp/demo-raw.mp4      # films 95 s at 1440×900, trimmed to 89
 
 # crop the terminal out of the desktop, then encode
-ffmpeg -i /tmp/demo-raw.mp4 -t 92 \
+ffmpeg -i /tmp/demo-raw.mp4 -t 89 \
   -vf "crop=1092:596:66:104,scale=1264:-2,pad=1280:720:8:(oh-ih)/2:black" \
   -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -movflags +faststart \
   docs/media/herd-demo.mp4

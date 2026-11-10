@@ -8,7 +8,7 @@ Settings, skills and memory follow you between machines; each machine keeps the 
 
 [![Herd: two machines, one Hermes](docs/media/herd-demo.gif)](docs/media/herd-demo.mp4)
 
-*92 seconds, real commands: pairing, the machine-bound split, a conflict settled with one key, keys arriving encrypted, undo.*
+*89 seconds, real commands: pairing, the machine-bound split, a conflict settled with one key, keys arriving encrypted, undo.*
 
 ## The short version
 
@@ -19,7 +19,7 @@ Settings, skills and memory follow you between machines; each machine keeps the 
 | **How it works** | One encrypted store, one short pairing code, a per-key merge that knows what belongs to the machine, and a pull at session start / push at session end |
 | **What it costs** | You keep the recovery code in a password manager (the pairing code is only for the other machine). Sessions and cron stay put. A real conflict is shown, then one key settles it |
 
-New here? [`PROBLEM.md`](docs/PROBLEM.md) is the case for it, [`COMPARISON.md`](docs/COMPARISON.md) ranks it against every other way to do this, and [`DEMO.md`](docs/DEMO.md) is the 92-second film, shot by shot.
+New here? [`PROBLEM.md`](docs/PROBLEM.md) is the case for it, [`COMPARISON.md`](docs/COMPARISON.md) ranks it against every other way to do this, and [`DEMO.md`](docs/DEMO.md) is the 89-second film, shot by shot.
 
 ## In the wild
 
@@ -209,7 +209,7 @@ No account. No hosted service. No telemetry. It does not back up your sessions, 
 |---|---|
 | [`docs/PROBLEM.md`](docs/PROBLEM.md) | The measured case for per-key sync, and why Hermes needs it |
 | [`docs/COMPARISON.md`](docs/COMPARISON.md) | Six ways to do this, weighted and ranked, with when to choose each |
-| [`docs/DEMO.md`](docs/DEMO.md) | The 92-second demo: shot list, timings, how to re-record it |
+| [`docs/DEMO.md`](docs/DEMO.md) | The 89-second demo: shot list, timings, how to re-record it |
 | [`docs/AUDIT.md`](docs/AUDIT.md) | Every claim above, mapped to the test that proves it |
 
 MIT.
