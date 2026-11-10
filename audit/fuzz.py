@@ -25,6 +25,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from herd import engine, items, crypto, yamlutil  # noqa: E402
 
+# Windows consoles default to cp1252 and blow up on the emoji these
+# checks print. Force UTF-8 on the streams the harness writes to.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 KEYS = ["display.skin", "model.default"]          # synced
 LOCAL = ["webapp.port"]                              # machine-bound, must never travel
 VALUES = ["v0", "v1", "v2", "v3", "naïve 🎨", 'q"uote', "a b"]

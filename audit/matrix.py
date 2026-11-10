@@ -23,6 +23,13 @@ CORE = Path(os.environ.get("HERMES_AGENT", Path.home() / ".hermes" / "hermes-age
 sys.path.insert(0, str(REPO))
 from herd import engine, items, store as store_mod, yamlutil, crypto  # noqa: E402
 
+# Windows consoles default to cp1252 and blow up on the emoji these
+# checks print. Force UTF-8 on the streams the harness writes to.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 RESULTS: list[tuple[str, str, bool, str]] = []
 
 
