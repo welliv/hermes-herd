@@ -180,16 +180,18 @@ Hermes 0.23+.
 
 The trust boundary is the other machine. Read [`SECURITY.md`](SECURITY.md) before pairing.
 
-- **A paired machine can change what the agent follows.** A pull writes `skills/`, `memories/MEMORY.md`, `memories/USER.md` and `SOUL.md`. Hermes loads those as instructions, not as quoted notes. `sync_diff` lists them under `review_before_pull`. `sync_now` asks Hermes for approval before it pulls or pushes. Cron, `hermes -q`, and any other non-interactive session skip the pull instead of prompting.
+- **A paired machine can change what the agent follows.** A pull writes `skills/`, `memories/MEMORY.md`, `memories/USER.md` and `SOUL.md`. Hermes loads those as instructions, not as quoted notes. `sync_diff` lists them under `review_before_pull`. `sync_now` asks Hermes for approval before it pulls or pushes. Cron, `hermes -q`, and any other non-interactive session skip the pull instead of prompting. `config.yaml` follows too: a paired machine can add an MCP server (a command Hermes starts here) or change the provider used with this machine's `.env` keys, so treat it as able to run code here.
 - **Joining replaces this machine's memory with the herd's.** `MEMORY.md` and `USER.md` on the joining machine are replaced. The previous text is saved at `plugin-data/herd/pre-join-MEMORY.md` (and `pre-join-USER.md` when that file differed), and the join output says so. It is not merged into the herd, because publishing the merge would make every other machine adopt this machine's notes. Copy back anything you still want.
 - **API keys are not synced.** Credential-named keys in `config.yaml` (`api_key`, `API_KEY`, `apiKey`, `x-api-key`, `token`, `secret`, `password`, `authorization`, and `*_api_key`, `*_token`, … at any depth, lists included) and `mcp_servers.*.env` / `mcp_servers.*.headers` never leave the machine. A peer's values are ignored on pull, and a peer cannot overwrite or delete the local ones. Herd does not read or write `~/.hermes/.env`, does not call `load_env_file`, and does not export provider keys through `get_secret`. Hermes has no API that can move those keys without opening the file, and a listed plugin may not open it. `hermes sync secrets on` refuses. `--sync-secrets` is ignored. An `env` item left by an older version stays ciphertext and is not applied.
+- **A peer cannot point your key somewhere else.** In a section that holds a credential on this machine (`model`, a `custom_providers` entry, an MCP server with `env` or `headers`, a section whose `extra_headers` carry one), the keys that decide where it is sent — `base_url`, `url`, `endpoint`, `api_base`, `host`, `provider`, `command`, `args` — stay as they are here when a peer changes them. The rest of the peer's change is taken, and the held part is listed by `hermes sync conflicts` (reason `credential-endpoint`) until you keep yours or take theirs. A section with no local credential syncs these keys normally.
+- **Secrets written into skills, memory or `SOUL.md` do travel.** Herd filters `config.yaml` by key name; it does not scan `skills/`, `MEMORY.md`, `USER.md` or `SOUL.md`. Text in those files syncs as written, so keep keys out of them.
 - **Encrypted before it leaves.** One 32-byte key, stretched with scrypt, used for AES-256-GCM. The store holds ciphertext of config, skills, memory and `SOUL.md`.
 - **Names are keyed hashes.** Objects are addressed by `HMAC(key, plaintext)`, so the store can't be probed by hashing guesses at a known setting.
 - **One recovery code.** Printed by `init`, reprintable with `hermes sync code`. It decrypts the store and cannot be reset — keep it in a password manager.
 - **Every payload names itself.** An object carries the item id and kind it was sealed for, so a manifest cannot point one item at another's blob.
 - **A disagreement stops, it does not ping-pong.** Each side keeps its version, records the disagreement, and stops republishing the item until one side agrees. A pull will not replace a newer local `SOUL.md` (or any other file item) with the older copy still in the store.
 - **Git, when you ask for it.** A folder store makes no network calls. A git store runs `git fetch` for status and diff (no rebase, no push), `git fetch` and `git rebase` for a pull, and `git push` only for a push. The remote is the one you configured. Every git subprocess, and the ssh or credential helper it starts, gets a minimal environment (`PATH`, `HOME`, locale, `TMPDIR`, `SYSTEMROOT` on Windows, `SSH_AUTH_SOCK`, `GIT_SSH_COMMAND` and a few more), never the agent's provider keys.
-- **Cron is opt-in on each machine.** `cron/jobs.json` syncs only between machines that each passed `--cron`. Everywhere else a peer's cron jobs are skipped, not installed.
+- **Cron is opt-in on each machine.** `cron/jobs.json` syncs only between machines that each passed `--cron` (`init`, `join`, `pair`, or `pair --code`). Everywhere else a peer's cron jobs are skipped, not installed, and the pull says so once per change to the peer's jobs.
 
 A store written by 1.0.2 or earlier holds unsealed objects. 1.0.3 skips them with a message rather than guessing; start a fresh store, or push once from each machine still running the old version. An `env` blob written by 1.1 is ignored.
 
@@ -197,10 +199,10 @@ A store written by 1.0.2 or earlier holds unsealed objects. 1.0.3 skips them wit
 
 | | |
 |---|---|
-| **`hermes sync pair [--store PATH] [--remote URL]`** | Create the herd and print one short, single-use code |
+| **`hermes sync pair [--store PATH] [--remote URL] [--cron]`** | Create the herd and print one short, single-use code. `--cron` also syncs cron jobs on this machine |
 | **`hermes sync`** | Pull, merge, push — the one you type |
 | **`hermes sync conflicts`** | Review disagreements; `--item config --take mine\|theirs` settles one |
-| `hermes sync pair --code …` | Join with that code (clones `--remote` if the store is git) |
+| `hermes sync pair --code … [--cron]` | Join with that code (clones `--remote` if the store is git). `--cron` takes and syncs cron jobs here |
 | `hermes sync init` / `join` | The explicit path: choose a store, use the long recovery code |
 | `hermes sync status` / `diff` | What's in sync; what a sync would do |
 | `hermes sync scope knowledge\|profile` | Share skills and memory only, or the whole profile |

@@ -47,6 +47,14 @@ CREDENTIAL_PATHS: tuple[str, ...] = (
     "mcp_servers.*.headers",
 )
 
+# Where a credential is sent. A peer may not move one of these in a mapping
+# that holds a credential on this machine: the key stays local, so changing its
+# endpoint (or the command an MCP server's env is handed to) would send this
+# machine's secret wherever the peer named.
+ENDPOINT_KEYS: frozenset[str] = frozenset({
+    "base_url", "url", "endpoint", "api_base", "host", "provider", "command", "args",
+})
+
 _MCP_ROOT = "mcp_servers"
 _MCP_LEAVES = frozenset({"env", "headers"})
 
@@ -81,6 +89,21 @@ def is_credential_path(path: str) -> bool:
     for pattern in CREDENTIAL_PATHS:
         depth = pattern.count(".") + 1
         if len(parts) >= depth and fnmatchcase(".".join(parts[:depth]), pattern):
+            return True
+    return False
+
+
+def holds_directly(value: Any, path: str = "") -> bool:
+    """True when the mapping *value* itself carries a credential key or subtree."""
+    if not isinstance(value, dict):
+        return False
+    for key, item in value.items():
+        child = _child(path, key)
+        if is_credential_key(key) or is_credential_path(child):
+            return True
+        # A header map beside the endpoint (`extra_headers`, `default_headers`)
+        # carries its credential to the same URL.
+        if isinstance(item, dict) and _norm_key(key).endswith("headers") and contains(item, child):
             return True
     return False
 
@@ -147,7 +170,7 @@ def _find_old(item: Any, old: list, matched: set[int], index: int) -> int | None
     return None
 
 
-def restore(new: Any, old: Any, path: str = "") -> Any:
+def restore(new: Any, old: Any, path: str = "", pin: bool = True) -> Any:
     """Put this machine's credentials (from *old*) back into *new*.
 
     Dicts are matched by key. List entries are matched by their ``name`` (or
@@ -155,6 +178,11 @@ def restore(new: Any, old: Any, path: str = "") -> Any:
     by position. A peer value for a credential is never kept. An entry the peer
     dropped is kept when it still holds a credential, so a poisoned empty list
     cannot delete one. Nothing else is invented.
+
+    With *pin* (the default for anything a pull adopts), a mapping that holds a
+    credential here also keeps its own ``ENDPOINT_KEYS``: a peer cannot send
+    this machine's key to another URL, provider or command. ``pin=False`` is
+    only for an explicit "take theirs" from the user.
     """
     if isinstance(new, dict) and isinstance(old, dict):
         out = strip(new, path)
@@ -163,7 +191,14 @@ def restore(new: Any, old: Any, path: str = "") -> Any:
             if is_credential_key(key) or is_credential_path(child):
                 out[key] = value
             elif key in out:
-                out[key] = restore(out[key], value, child)
+                out[key] = restore(out[key], value, child, pin)
+        if pin and holds_directly(old, path):
+            # The peer cannot point this machine's credential somewhere else.
+            for key in ENDPOINT_KEYS:
+                if key in old:
+                    out[key] = old[key]
+                else:
+                    out.pop(key, None)
         return out
     if isinstance(new, list) and isinstance(old, list):
         out = []
@@ -174,7 +209,7 @@ def restore(new: Any, old: Any, path: str = "") -> Any:
                 out.append(strip(item, path))
                 continue
             matched.add(found)
-            out.append(restore(item, old[found], path))
+            out.append(restore(item, old[found], path, pin))
         for index, item in enumerate(old):
             if index not in matched and contains(item, path):
                 out.append(item)
@@ -182,7 +217,7 @@ def restore(new: Any, old: Any, path: str = "") -> Any:
     return strip(new, path) if isinstance(new, (dict, list)) else new
 
 
-def preserve(new: Any, old: Any, path: str = "") -> Any:
+def preserve(new: Any, old: Any, path: str = "", pin: bool = True) -> Any:
     """*new* with this machine's credentials intact.
 
     ``None`` (a peer set the value to null) does not delete a credential.
@@ -195,4 +230,4 @@ def preserve(new: Any, old: Any, path: str = "") -> Any:
         return old if contains(old, path) else None
     if isinstance(old, (dict, list)) and not isinstance(new, type(old)) and contains(old, path):
         return old
-    return restore(new, old, path)
+    return restore(new, old, path, pin)

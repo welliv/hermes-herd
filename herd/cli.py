@@ -126,7 +126,8 @@ def cmd_pair(args) -> int:
             result = engine.pair_start(home, getattr(args, "store", None),
                                        remote=(getattr(args, "remote", "") or "").strip(),
                                        name=args.name,
-                                       scope="knowledge" if getattr(args, "knowledge", False) else "")
+                                       scope="knowledge" if getattr(args, "knowledge", False) else "",
+                                       include_cron=bool(getattr(args, "cron", False)))
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
     if _json(args):
@@ -524,7 +525,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p.add_argument("store", nargs="?", help="Store folder (default: ~/herd-store)")
     p.add_argument("--code", help="Pairing code from the machine that already syncs")
     p.add_argument("--cron", action="store_true",
-                   help="With --code: also take and sync cron jobs (off by default)")
+                   help="Also sync cron jobs on this machine (off by default)")
     p.add_argument("--remote", help="Git remote to create the store against (first machine)")
     p.add_argument("--name", help="Name for this device (default: hostname)")
     p.add_argument("--sync-secrets", action="store_true",

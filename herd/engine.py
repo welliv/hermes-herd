@@ -1328,7 +1328,7 @@ def sync(home: Path) -> dict:
 # ── pairing ──────────────────────────────────────────────────────────────────
 def pair_start(home: Path, store_path: str | None = None, *, remote: str = "",
                name: str | None = None, ttl: int = pairing.DEFAULT_TTL,
-               scope: str = "") -> dict:
+               scope: str = "", include_cron: bool = False) -> dict:
     """Make a short, single-use code another machine can finish pairing with.
 
     The store is created if this machine has none, so the first command a person
@@ -1344,6 +1344,12 @@ def pair_start(home: Path, store_path: str | None = None, *, remote: str = "",
         policy.save(data / "policy.yaml")
     if load_state(data_dir(home)).get("store"):
         ctx = open_context(home)
+        if include_cron and not _cron_opt_in(ctx):
+            # `pair --cron` on a machine that already syncs turns cron on here.
+            # It never turns it off: leaving out --cron is not a choice.
+            ctx.state["sync_cron"] = True
+            write_json(ctx.data / "state.json", ctx.state)
+            push(ctx)  # publish the jobs now, so a machine pairing with --cron gets them
     else:
         target = Path(store_path or DEFAULT_STORE).expanduser()
         if (target / "store.json").exists():
@@ -1352,7 +1358,7 @@ def pair_start(home: Path, store_path: str | None = None, *, remote: str = "",
                 f"from the machine that made it; otherwise pick another folder:\n"
                 f"  hermes sync pair {target}-2"
             )
-        init(home, str(target), remote=remote, name=name)
+        init(home, str(target), remote=remote, name=name, include_cron=include_cron)
         ctx = open_context(home)
 
     code = pairing.new_code()
@@ -1498,7 +1504,10 @@ def resolve(home: Path, item_id: str, choice: str) -> dict:
         if local_value is config_merge.MISSING:
             adopted = None if remote_value is None else credentials.strip(remote_value, path)
         else:
-            adopted = credentials.preserve(remote_value, local_value, path)
+            # The user chose theirs on purpose, so an endpoint the pull held
+            # back beside a local credential is taken now. Credentials still
+            # are not: this machine's own stay, and the peer's never arrive.
+            adopted = credentials.preserve(remote_value, local_value, path, pin=False)
         _write_config_value(ctx, path, adopted)
     elif item_id == "env":
         raise HerdError(SECRETS_UNSUPPORTED)

@@ -589,8 +589,11 @@ def _():
               '    engine.push(engine.open_context(h))\n')
     ps = [subprocess.Popen([sys.executable, "-c", script, str(a), f"p{i}"]) for i in range(3)]
     codes = [p.wait() for p in ps]
-    doc = json.loads(next((root / "store" / "devices").glob("*.json")).read_text())
-    return codes == [0, 0, 0] and doc["items"], f"exit={codes}"
+    # Read a's own manifest. The first file in the folder is a or b at random
+    # (device ids are random), and b, which pushed nothing new, has no items.
+    mine = root / "store" / "devices" / f"{engine.open_context(a).device['id']}.json"
+    doc = json.loads(mine.read_text())
+    return codes == [0, 0, 0] and doc["items"], f"exit={codes} items={len(doc['items'])}"
 
 
 @check("concurrency", "a pull after a concurrent push is coherent")

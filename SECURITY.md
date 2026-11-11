@@ -10,6 +10,14 @@ A pull can write `skills/`, `memories/MEMORY.md`, `memories/USER.md` and
 paragraph of memory from the other machine is not data the agent quotes. It is
 text the agent follows.
 
+`config.yaml` syncs too, and it decides what Hermes runs and where it sends
+requests. A paired machine can add an MCP server (a command Hermes starts on
+this machine), or change the provider or `base_url` used with the keys this
+machine keeps in `.env`. Herd pins the endpoint only beside a credential that
+sits in `config.yaml` itself (see *Where a key is sent*); it cannot see which
+`.env` key a provider will use. Treat a paired machine as able to run code
+here.
+
 Pair only machines you control. Do not pair a store you did not create, and do
 not point `--remote` at a git URL you do not trust: whoever can push to that
 remote can publish the next skill the other machine will load.
@@ -65,16 +73,44 @@ new store.
 `policy.yaml` with `sync_secrets: true` is ignored. An `env` item left in a
 store by an earlier version is not decrypted and not applied.
 
-The recovery code decrypts the store. The store holds config, skills, memory
-and `SOUL.md`, not API keys. Keep the code in a password manager.
+### Where a key is sent
+
+A credential that stays here is still used with settings that do sync. So in
+any mapping that holds a credential on this machine (`model` with an
+`api_key`, a `custom_providers` entry with one, an `mcp_servers.<name>` with
+`env` or `headers`, a section whose `extra_headers` / `default_headers` carry
+one), the keys that decide where the credential goes —
+`base_url`, `url`, `endpoint`, `api_base`, `host`, `provider`, `command`,
+`args` — are pinned. A peer that changes, adds or removes one of them does not
+move this machine's: the value stays, the rest of the peer's change is taken,
+and the held part is recorded as a conflict with reason `credential-endpoint`.
+`hermes sync conflicts` shows it; keeping yours republishes it, and taking
+theirs applies the peer's endpoint while this machine's key stays. A mapping
+that holds no credential here syncs these keys normally, so a machine without
+the key still follows a provider change.
+
+### Other synced files are not scanned
+
+The credential rule is applied to `config.yaml` by key name. Herd does not
+look inside `skills/`, `memories/MEMORY.md`, `memories/USER.md` or `SOUL.md`
+for secrets: whatever text is in them is encrypted and synced as written. Keep
+keys out of those files.
+
+The recovery code decrypts the store. The store holds config (without the
+credentials above), skills, memory and `SOUL.md`, and anything written in
+them. Keep the code in a password manager.
 
 ## What a sync writes
 
 Inside the Hermes home: `config.yaml` (per key, machine-bound keys left
 alone), `skills/`, `memories/MEMORY.md`, `memories/USER.md`, `SOUL.md`, and
-`cron/jobs.json` only on a machine that turned cron sync on itself (`--cron` at
-`init`, `join` or `pair`). A machine without it declines a peer's cron jobs:
-it neither installs nor deletes them, and the pull reports them as skipped. Each pull copies
+`cron/jobs.json` only on a machine that turned cron sync on itself: `--cron`
+at `init` or `join`, at `pair --code` on the joining machine, or at `pair` on
+the machine that makes the code (which turns it on there if that machine
+already syncs; leaving `--cron` out never turns it off). A machine without it
+declines a peer's cron jobs: it neither installs nor deletes them, and the
+pull reports them as skipped, with a warning once per change to the peer's
+jobs. Each pull copies
 the previous file into `plugin-data/herd/backups/` first. `hermes sync undo`
 restores the last backup.
 

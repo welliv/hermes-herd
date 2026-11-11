@@ -100,7 +100,12 @@ def merge(
     local = local or {}
     remote = remote or {}
 
-    def walk(b, l, r, path: str):
+    def walk(b, l, r, path: str, pinned: bool = False):
+        if pinned and l != r and r != b:
+            # An endpoint beside a credential that stays here: shown, not adopted.
+            result.conflicts.append(Conflict(path=path, base=b, local=l, remote=r,
+                                             resolution="local", reason="credential-endpoint"))
+            return l
         if _blocked(path, is_local_only):
             # Device-local: the remote value is never adopted, even when it is
             # the only side that changed. A missing local value is not filled
@@ -114,8 +119,10 @@ def merge(
         if isinstance(l, dict) and isinstance(r, dict):
             bd = b if isinstance(b, dict) else {}
             out = {}
+            guard = credentials.holds_directly(l, path)
             for key in sorted(set(bd) | set(l) | set(r)):
-                value = walk(bd.get(key, MISSING), l.get(key, MISSING), r.get(key, MISSING), _join(path, key))
+                value = walk(bd.get(key, MISSING), l.get(key, MISSING), r.get(key, MISSING), _join(path, key),
+                             pinned=guard and str(key) in credentials.ENDPOINT_KEYS)
                 if value is not MISSING:
                     out[key] = value
             return out
@@ -131,6 +138,13 @@ def merge(
             adopted = _adopt(r, l, path)
             if adopted is not MISSING and path and credentials.contains(l, path) and adopted == l:
                 result.local_only_kept.append(path)
+            if (isinstance(l, list) and isinstance(r, list) and path
+                    and _stripped(adopted, path) != credentials.strip(credentials.restore(r, l, path, pin=False), path)):
+                # A list entry that holds a credential here kept its own URL,
+                # provider or command. The rest of the peer's change was taken;
+                # the held part is shown so the user can take it on purpose.
+                result.conflicts.append(Conflict(path=path, base=b, local=l, remote=r,
+                                                 resolution="local", reason="credential-endpoint"))
             return adopted
         if rv == bv:
             if path and l is not MISSING:

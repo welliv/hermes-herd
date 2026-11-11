@@ -43,7 +43,31 @@ Fixes from the catalog review of 1.2.0 (NousResearch/hermes-agent#151037).
   `GH_TOKEN`, `GITHUB_TOKEN`, ...). 1.2.0 passed the agent's whole
   environment. If your git remote relied on `GH_TOKEN`/`GITHUB_TOKEN` in the
   environment, use a credential helper or an ssh key.
+- **A peer cannot point a local key somewhere else.** In a mapping that holds
+  a credential on this machine (`model`, a `custom_providers` entry, an
+  `mcp_servers.<name>` with `env` or `headers`, a section whose
+  `extra_headers` / `default_headers` carry one), `base_url`, `url`,
+  `endpoint`, `api_base`, `host`, `provider`, `command` and `args` are pinned:
+  a peer's change to them is held, recorded as a `credential-endpoint`
+  conflict, and applied only if you take theirs. The rest of the peer's change
+  is taken, and a mapping with no local credential syncs these keys normally.
+  Without this, a peer could change `model.base_url` and the next request
+  would carry this machine's `model.api_key` to the peer's endpoint, or change
+  an MCP server's `command` and receive its `env`.
+- **`hermes sync pair --cron` works on the machine that makes the code.** It
+  was accepted and ignored. On a new herd it creates the store with cron sync
+  on; on a machine that already syncs it turns cron sync on and publishes the
+  jobs. Leaving `--cron` out never turns it off.
+- The pull warns about declined cron jobs once per change to the peer's jobs,
+  not on every pull.
+- Docs: a paired machine can add MCP servers and change the provider used
+  with `.env` keys, so it is treated as able to run code here; secrets written into skills, `MEMORY.md`, `USER.md` or `SOUL.md` are
+  not filtered and sync as written; `docs/AUDIT.md` maps the 1.2.1 claims to
+  their tests.
 - `hermes sync policy` prints the credential rule.
+- `audit/matrix.py`: the same-device serialisation check read whichever
+  device manifest the folder listed first, so it failed about half the time
+  on a correct store. It now reads the pushing device's own manifest.
 - A one-shot Hermes turn (`hermes chat -q`, `-z`) hosted by the gateway is
   unattended even when `HERMES_SINGLE_QUERY_SESSION` lives only in the session
   context, or the gateway marks the turn finite. `sync_now` is blocked there
