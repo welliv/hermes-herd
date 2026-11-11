@@ -267,13 +267,73 @@ class Store:
 
 
 # ── git transport ────────────────────────────────────────────────────────────
-def _git(args: list[str], cwd: Path, check: bool = True, timeout: int = 60) -> subprocess.CompletedProcess:
+# git, and the ssh or credential helper it starts, get an allowlisted
+# environment, not the agent's. The agent process holds provider keys
+# (OPENAI_API_KEY and friends); a hook, askpass, ssh wrapper or credential
+# helper must not be able to read them. Passed through, when set:
+#   - what git needs to run: PATH, HOME, TERM, locale, temp dir, GIT_EXEC_PATH
+#     (so a shimmed git still finds its helpers), and on Windows the variables
+#     its runtime cannot start without (SYSTEMROOT and the rest);
+#   - how the user reaches their remote: SSH_AUTH_SOCK, GIT_SSH /
+#     GIT_SSH_COMMAND / GIT_SSH_VARIANT, askpass, GIT_CONFIG_GLOBAL,
+#     GIT_CONFIG_NOSYSTEM, proxies, CA bundles.
+# Not passed: GIT_DIR, GIT_WORK_TREE, GIT_CONFIG_COUNT, GIT_CONFIG_KEY_*,
+# GIT_CONFIG_PARAMETERS (those can point git at another repo or inject config)
+# and every provider key or token, including GH_TOKEN / GITHUB_TOKEN.
+# A remote that only authenticates through an env token must use a credential
+# helper that has its own store, or an ssh key.
+_GIT_ENV_EXACT: frozenset[str] = frozenset({
+    "PATH", "HOME", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "TZ", "TERM",
+    "TMPDIR", "TEMP", "TMP", "USER", "LOGNAME", "XDG_CONFIG_HOME",
+    # Windows: git-for-windows fails to start without these.
+    "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE",
+    "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+    # Reaching the remote. ssh and git-credential-* inherit this same mapping.
+    "SSH_AUTH_SOCK", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "DISPLAY",
+    "GIT_EXEC_PATH",
+    "GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "GIT_ASKPASS",
+    "GIT_TERMINAL_PROMPT", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+    "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE",
+})
+_GIT_ENV_UPPER = frozenset(name.upper() for name in _GIT_ENV_EXACT)
+
+
+_IDENTITY = ("-c", "user.name=Herd", "-c", "user.email=herd@localhost")
+
+
+def git_env(source: dict | None = None) -> dict[str, str]:
+    """The minimal environment every git, ssh and credential-helper child gets.
+
+    Matching is case-insensitive so Windows ``Path`` / ``SystemRoot`` still
+    pass. The original spelling is kept: on Unix ``http_proxy`` and
+    ``HTTP_PROXY`` are different variables and both are on the list.
+    """
+    src = os.environ if source is None else source
+    env = {k: v for k, v in src.items() if k.upper() in _GIT_ENV_UPPER}
+    # GIT_DIR and friends are absent by construction, so an inherited value
+    # cannot point git at another repository. PATH must exist for git to run.
+    if not any(k.upper() == "PATH" for k in env):
+        env["PATH"] = os.defpath
+    return env
+
+
+def _run_git(args: list[str], cwd: Path, check: bool = True, timeout: int = 60) -> subprocess.CompletedProcess:
+    """The only subprocess this package starts. Children inherit ``git_env()``."""
     try:
         return subprocess.run(
-            ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=timeout, check=check
+            ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=timeout, check=check,
+            env=git_env(),
         )
     except FileNotFoundError as exc:  # pragma: no cover - git is a hard requirement
         raise StoreError("git is not installed. Use a plain folder store, or install git.") from exc
+
+
+def _git(args: list[str], cwd: Path, check: bool = True, timeout: int = 60) -> subprocess.CompletedProcess:
+    try:
+        return _run_git(args, cwd, check=check, timeout=timeout)
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip().splitlines()
         raise StoreError(f"git {' '.join(args)} failed: {detail[-1] if detail else 'unknown error'}") from exc
@@ -300,7 +360,10 @@ class GitStore(Store):
             return
         try:
             branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], self.root).stdout.strip() or "main"
-            _git(["rebase", "--autostash", "--quiet", f"origin/{branch}"], self.root)
+            # Rebasing replays this machine's unpushed store commit, which needs a
+            # committer. Use the same fixed identity publish() commits with, so a
+            # fresh machine with no git identity can still pull.
+            _git([*_IDENTITY, "rebase", "--autostash", "--quiet", f"origin/{branch}"], self.root)
         except StoreError:
             # A dirty rebase is the one case worth surfacing: the user must choose.
             _git(["rebase", "--abort"], self.root, check=False)
@@ -315,7 +378,7 @@ class GitStore(Store):
         status = _git(["status", "--porcelain"], self.root).stdout.strip()
         committed = False
         if status:
-            _git(["-c", "user.name=Herd", "-c", "user.email=herd@localhost", "commit", "--quiet", "-m", message], self.root)
+            _git([*_IDENTITY, "commit", "--quiet", "-m", message], self.root)
             committed = True
         if not self.has_remote():
             return {"committed": committed, "pushed": False, "detail": "no remote configured"}
@@ -343,10 +406,8 @@ def clone(remote: str, dest: str | Path) -> Path:
     try:
         # `--` so a remote that looks like a flag (`--upload-pack=...`, `-c`)
         # is the URL, not a clone option.
-        subprocess.run(
-            ["git", "clone", "--quiet", "--", remote, str(dest)],
-            check=True, capture_output=True, text=True,
-        )
+        # cwd stays the caller's so a relative remote still points where they named.
+        _run_git(["clone", "--quiet", "--", remote, str(dest)], Path.cwd())
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or "").strip().splitlines()
         raise StoreError(f"Could not clone {remote}: {detail[-1] if detail else 'git error'}") from exc
@@ -354,8 +415,7 @@ def clone(remote: str, dest: str | Path) -> Path:
     # clone with an empty working tree; check out whichever branch has the store.
     if not (dest / "store.json").exists():
         for branch in ("main", "master"):
-            subprocess.run(["git", "-C", str(dest), "checkout", "--quiet", branch],
-                           capture_output=True, text=True)
+            _run_git(["checkout", "--quiet", branch], dest, check=False)
             if (dest / "store.json").exists():
                 break
     return dest

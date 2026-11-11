@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from . import yamlutil
+from . import credentials, yamlutil
 
 MISSING = object()
 
@@ -41,9 +41,11 @@ class Conflict:
 
         return {
             "path": self.path,
-            "base": plain(self.base),
-            "local": plain(self.local),
-            "remote": plain(self.remote),
+            # Conflicts are printed and saved on disk. Credential values are
+            # already in config.yaml; they do not need a second copy here.
+            "base": plain(credentials.strip(self.base, self.path)),
+            "local": plain(credentials.strip(self.local, self.path)),
+            "remote": plain(credentials.strip(self.remote, self.path)),
             "kept": self.resolution,
             "reason": self.reason,
         }
@@ -63,6 +65,29 @@ def _join(prefix: str, key: str) -> str:
     return f"{prefix}.{key}" if prefix else str(key)
 
 
+def _blocked(path: str, is_local_only: Callable[[str], bool]) -> bool:
+    """Local-only policy, plus credentials, which `shared` cannot lift."""
+    return bool(path) and (is_local_only(path) or credentials.is_credential_path(path))
+
+
+def _stripped(value: Any, path: str) -> Any:
+    if value is MISSING:
+        return MISSING
+    return credentials.strip(value, path)
+
+
+def _adopt(remote: Any, local: Any, path: str) -> Any:
+    """Take *remote*, then put this machine's credentials back.
+
+    A missing or null remote does not delete a value that holds a credential.
+    """
+    if local is MISSING:
+        return MISSING if remote is MISSING else credentials.strip(remote, path)
+    if remote is MISSING:
+        return local if credentials.contains(local, path) else MISSING
+    return credentials.preserve(remote, local, path)
+
+
 def merge(
     base: dict | None,
     local: dict | None,
@@ -76,9 +101,10 @@ def merge(
     remote = remote or {}
 
     def walk(b, l, r, path: str):
-        if path and is_local_only(path):
+        if _blocked(path, is_local_only):
             # Device-local: the remote value is never adopted, even when it is
-            # the only side that changed.
+            # the only side that changed. A missing local value is not filled
+            # in from the peer, so a credential cannot be injected either.
             if l is not MISSING:
                 result.local_only_kept.append(path)
             return l
@@ -93,19 +119,26 @@ def merge(
                 if value is not MISSING:
                     out[key] = value
             return out
-        if l is r or l == r:
+        # Lists can hold credentials (a custom provider's api_key) that never
+        # travel. Compare without them, and keep this machine's when the
+        # remote list is taken. A null or a shape change cannot drop them.
+        lv, rv, bv = _stripped(l, path), _stripped(r, path), _stripped(b, path)
+        if l is r or lv == rv:
             return l
-        if l == b:
+        if lv == bv:
             if path:
                 result.remote_applied.append(path)
-            return r
-        if r == b:
+            adopted = _adopt(r, l, path)
+            if adopted is not MISSING and path and credentials.contains(l, path) and adopted == l:
+                result.local_only_kept.append(path)
+            return adopted
+        if rv == bv:
             if path and l is not MISSING:
                 result.local_kept.append(path)
             return l
         # Both sides changed this key to different values.
         resolution = prefer if prefer in {"local", "remote"} else "local"
-        if path and is_local_only(path):
+        if _blocked(path, is_local_only):
             resolution = "local"
         result.conflicts.append(
             Conflict(
@@ -114,10 +147,12 @@ def merge(
                 local=l,
                 remote=r,
                 resolution=resolution,
-                reason="local-only" if path and is_local_only(path) else "both-edited",
+                reason="local-only" if _blocked(path, is_local_only) else "both-edited",
             )
         )
-        return l if resolution == "local" else r
+        if resolution == "local":
+            return l
+        return _adopt(r, l, path)
 
     for key in sorted(set(base) | set(local) | set(remote)):
         if key == _VERSION_KEY:
@@ -128,7 +163,7 @@ def merge(
             if merged_version is not None:
                 result.merged[key] = merged_version
             continue
-        if is_local_only(key):
+        if _blocked(key, is_local_only):
             if key in local:
                 result.merged[key] = local[key]
                 result.local_only_kept.append(key)
@@ -139,7 +174,7 @@ def merge(
 
     # A local-only subtree must survive verbatim, including keys the remote invented.
     for key in local:
-        if is_local_only(key) and key not in result.merged and key != _VERSION_KEY:
+        if _blocked(key, is_local_only) and key not in result.merged and key != _VERSION_KEY:
             result.merged[key] = local[key]
             result.local_only_kept.append(key)
 

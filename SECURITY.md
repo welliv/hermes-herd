@@ -35,6 +35,32 @@ provider keys, and it does not call `load_env_file`. Hermes has no API that
 lets a plugin move another product's API keys between machines without opening
 that file, and catalog rule 11 forbids opening it.
 
+API keys written into `config.yaml` stay on the machine too. Any key named
+`api_key`, `token`, `secret`, `password` or `authorization` (case-insensitive,
+`-` read as `_`, camelCase read as snake_case, so `apiKey`, `x-api-key` and
+`accessToken` count), or ending in `_api_key`, `_token`, `_secret`,
+`_password`, at any depth and inside lists, plus `mcp_servers.<name>.env` and
+`mcp_servers.<name>.headers` (the section and the leaf are case-insensitive),
+is dropped before the config is packed. The same filter runs on a config that
+arrives from another machine, including when you settle a conflict with
+`--take theirs`, so a peer cannot inject or overwrite one. Omitting the key,
+setting it to null, or replacing its parent with null or a different shape
+does not delete this machine's value. A list entry a peer removed is kept
+here when it still holds a credential, so an empty `custom_providers` list
+cannot drop a local `api_key`. `shared:` in `policy.yaml` cannot lift this
+rule. `hermes sync policy` prints the full list (it also covers `passwd`,
+`password_hash`, `private_key`, `secret_key`, `cookie`, and the suffixes
+`_apikey`, `_passwd`, `_private_key`, `_secret_key`, `_authorization`). Names
+such as `api_key_env`, which hold the *name* of an environment variable,
+still sync. An `env` map that is not under `mcp_servers` is not local as a
+whole: credential-named keys inside it stay here, and other keys still sync.
+
+A store written by 1.2.0 or earlier may still hold `model.api_key` and similar
+values inside its encrypted config objects. 1.2.1 ignores them on pull and
+stops writing new ones, but it does not rewrite store history. If your
+`config.yaml` held a key while 1.2.0 was syncing, rotate that key, or start a
+new store.
+
 `hermes sync secrets on` refuses. `--sync-secrets` is ignored. An older
 `policy.yaml` with `sync_secrets: true` is ignored. An `env` item left in a
 store by an earlier version is not decrypted and not applied.
@@ -46,7 +72,9 @@ and `SOUL.md`, not API keys. Keep the code in a password manager.
 
 Inside the Hermes home: `config.yaml` (per key, machine-bound keys left
 alone), `skills/`, `memories/MEMORY.md`, `memories/USER.md`, `SOUL.md`, and
-`cron/jobs.json` only when cron sync was turned on at `init`. Each pull copies
+`cron/jobs.json` only on a machine that turned cron sync on itself (`--cron` at
+`init`, `join` or `pair`). A machine without it declines a peer's cron jobs:
+it neither installs nor deletes them, and the pull reports them as skipped. Each pull copies
 the previous file into `plugin-data/herd/backups/` first. `hermes sync undo`
 restores the last backup.
 
@@ -55,7 +83,18 @@ Not written: `.env`, `auth.json`, `state.db`, sessions.
 ## Network
 
 A folder store makes no network calls. A git store runs git against the remote
-you configured:
+you configured. Git (and the ssh it starts) gets a minimal environment, not the
+agent's: `PATH`, `HOME`, `TERM`, locale and temp-dir variables (`TMPDIR` on
+macOS, `TEMP`/`TMP` on Windows), `GIT_EXEC_PATH`, the Windows variables git
+needs to start (`SYSTEMROOT` and the rest of that set), `SSH_AUTH_SOCK`,
+`GIT_SSH`/`GIT_SSH_COMMAND`/`GIT_SSH_VARIANT`/`GIT_ASKPASS`,
+`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM`, proxies and CA-bundle paths
+(`SSL_CERT_*`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`). Names match
+case-insensitively. ssh and any credential helper git starts inherit this
+same environment. Provider keys and tokens (`OPENAI_API_KEY`, `GH_TOKEN`,
+...) are not passed, and neither are `GIT_DIR`, `GIT_WORK_TREE`,
+`GIT_CONFIG_COUNT` or `GIT_CONFIG_KEY_*`. Authenticate the remote with an ssh
+key or a git credential helper:
 
 | Action | Git |
 |---|---|
@@ -73,7 +112,9 @@ prompt. Herd does not approve the call itself, does not turn YOLO on, and
 does not spawn a shell to get around the prompt.
 
 In cron (`HERMES_CRON_SESSION`, or Hermes's cron execution identity), in
-`hermes -q` (`HERMES_SINGLE_QUERY_SESSION`), and when `HERD_UNATTENDED=1`,
+`hermes -q` (`HERMES_SINGLE_QUERY_SESSION`, read from the process environment
+or, when the gateway hosts the turn, from the session context; a one-shot
+turn the gateway marks finite counts too), and when `HERD_UNATTENDED=1`,
 the hook returns `{"action": "block"}` and the tool returns
 `{"ok": false, "code": "unattended"}` without writing. Blocking, rather than
 asking, is deliberate: a cron job can be configured to auto-approve, and a

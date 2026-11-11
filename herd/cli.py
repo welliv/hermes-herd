@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import engine
 from .policy import DEFAULT_LOCAL_ONLY, DEFAULT_SECRET_SKIP, Policy
+from .credentials import CREDENTIAL_NAMES, CREDENTIAL_PATHS, CREDENTIAL_SUFFIXES
 from .util import hermes_home, human_age
 
 
@@ -87,7 +88,8 @@ def cmd_join(args) -> int:
     home = hermes_home()
     try:
         result = engine.join(home, args.store, args.code, name=args.name,
-                             sync_secrets=bool(getattr(args, "sync_secrets", False)))
+                             sync_secrets=bool(getattr(args, "sync_secrets", False)),
+                             include_cron=bool(getattr(args, "cron", False)))
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
     if _json(args):
@@ -118,7 +120,8 @@ def cmd_pair(args) -> int:
                 engine.set_scope(home, "knowledge")
             result = engine.pair_finish(home, code, getattr(args, "store", None),
                                         name=args.name,
-                                        sync_secrets=bool(getattr(args, "sync_secrets", False)))
+                                        sync_secrets=bool(getattr(args, "sync_secrets", False)),
+                                        include_cron=bool(getattr(args, "cron", False)))
         else:
             result = engine.pair_start(home, getattr(args, "store", None),
                                        remote=(getattr(args, "remote", "") or "").strip(),
@@ -315,6 +318,8 @@ def cmd_pull(args) -> int:
     if _json(args):
         _dump(result)
         return 0
+    for item in result.get("declined") or []:
+        _print(f"  skipped {item}: cron sync is off on this machine")
     if not result["applied"] and not result["removed"]:
         _print("Already up to date — nothing to pull.")
         return 0
@@ -344,6 +349,9 @@ def cmd_sync(args) -> int:
     _print(f"Synced ({result['order']}) — {changed} item change(s).")
     if second.get("conflicts"):
         _print(f"  {len(second['conflicts'])} conflict(s) kept locally; `hermes sync conflicts`")
+    for part in (first, second):
+        for item in part.get("declined") or []:
+            _print(f"  skipped {item}: cron sync is off on this machine")
     _print(f"  {engine.summary(hermes_home())}")
     return 0
 
@@ -449,6 +457,12 @@ def cmd_policy(args) -> int:
         _print("\nFollows you anyway (shared):")
         for pattern in policy.shared:
             _print(f"  {pattern}")
+    _print("\nAlways stays on this machine (credentials; `shared` cannot lift these):")
+    _print("  any key named " + ", ".join(sorted(CREDENTIAL_NAMES)) + " (any depth, lists too)")
+    _print("  any key ending " + ", ".join(CREDENTIAL_SUFFIXES))
+    _print("  names match case-insensitively; apiKey and x-api-key count, api_key_env does not")
+    for pattern in CREDENTIAL_PATHS:
+        _print(f"  {pattern}")
     _print("\nStays on this machine (.env keys):")
     for pattern in DEFAULT_SECRET_SKIP:
         _print(f"  {pattern}")
@@ -488,6 +502,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p = subs.add_parser("join", help="Join an existing herd on this machine")
     p.add_argument("store", help="Folder, or a git URL to clone")
     p.add_argument("--code", required=True, help="Recovery code from `hermes sync code`")
+    p.add_argument("--cron", action="store_true", help="Also take and sync cron jobs (off by default)")
     p.add_argument("--sync-secrets", action="store_true",
                    help="Ignored. API key sync is not supported; Herd does not read .env")
     p.add_argument("--name", help="Name for this device (default: hostname)")
@@ -508,6 +523,8 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p = subs.add_parser("pair", help="Pair a second machine with a short, single-use code")
     p.add_argument("store", nargs="?", help="Store folder (default: ~/herd-store)")
     p.add_argument("--code", help="Pairing code from the machine that already syncs")
+    p.add_argument("--cron", action="store_true",
+                   help="With --code: also take and sync cron jobs (off by default)")
     p.add_argument("--remote", help="Git remote to create the store against (first machine)")
     p.add_argument("--name", help="Name for this device (default: hostname)")
     p.add_argument("--sync-secrets", action="store_true",

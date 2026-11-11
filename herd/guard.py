@@ -17,7 +17,33 @@ _UNATTENDED_SOURCES = {"cron", "scheduler", "single_query", "noninteractive", "u
 
 
 def _flag(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in _TRUTHY
+    """A Hermes session marker, read the way Hermes reads it.
+
+    Since 0.23 a ``hermes chat -q`` turn can run in the gateway, whose process
+    environment never had ``HERMES_SINGLE_QUERY_SESSION``: the marker lives in
+    the session context. Read that first, then the process environment.
+    """
+    value = ""
+    try:
+        from gateway.session_context import get_session_env
+        value = get_session_env(name, "") or ""
+    except Exception:
+        value = ""
+    if not value:
+        value = os.environ.get(name, "")
+    return str(value).strip().lower() in _TRUTHY
+
+
+def _finite_turn() -> bool:
+    """True when the gateway admitted this turn as one-shot (``chat -q``, ``-z``)."""
+    try:
+        from gateway.session_finite import finite_turn_required
+    except Exception:
+        return False
+    try:
+        return finite_turn_required() is True
+    except Exception:
+        return False
 
 
 def cron_execution_active(ctx=None) -> bool:
@@ -56,6 +82,8 @@ def unattended(kwargs: dict | None = None, ctx=None) -> bool:
     """
     kwargs = kwargs or {}
     if _flag("HERMES_CRON_SESSION") or _flag("HERMES_SINGLE_QUERY_SESSION") or _flag("HERD_UNATTENDED"):
+        return True
+    if _finite_turn():
         return True
     platform = str(kwargs.get("platform") or "").strip().lower()
     if platform in _UNATTENDED_PLATFORMS:

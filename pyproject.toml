@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-herd"
-version = "1.2.0"
+version = "1.2.1"
 description = "Keep one Hermes across every machine: per-key settings sync, encrypted secrets, restorable backups."
 requires-python = ">=3.10"
 dependencies = ["cryptography>=41", "ruamel.yaml>=0.17"]

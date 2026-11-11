@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import config_merge, crypto, items as items_mod, pairing, store as store_mod, yamlutil
+from . import config_merge, credentials, crypto, items as items_mod, pairing, store as store_mod, yamlutil
 from .policy import Policy
 from .store import Entry, Store, StoreError
 from .util import atomic_write, file_lock, human_age, iso, now, read_json, write_json
@@ -131,6 +131,26 @@ def _item_sync_state(mine, remote, base_row: dict, device_id: str, local_oid: st
     if base_oid and remote_oid == base_oid and local_oid != base_oid:
         return "local-ahead"
     return "diverged"
+
+
+def _cron_opt_in(ctx) -> bool:
+    """True only for a real JSON ``true``.
+
+    ``bool("false")`` is true, and a missing key is the machine that joined
+    without ``--cron``. Only an actual boolean true opts in.
+    """
+    return ctx.state.get("sync_cron") is True
+
+
+def _takes_item(ctx, item_id: str) -> bool:
+    """Items gated by a per-machine opt-in, beyond scope.
+
+    ``file:cron`` lands only where ``sync_cron`` is true in this machine's
+    state; everywhere else it is declined in both directions.
+    """
+    if item_id == "file:cron":
+        return _cron_opt_in(ctx)
+    return True
 
 
 def _deletable(item_id: str) -> bool:
@@ -305,7 +325,7 @@ def init(home: Path, store_path: str, *, remote: str = "", name: str | None = No
 
 
 def join(home: Path, store_path: str, code: str, *, name: str | None = None,
-         sync_secrets: bool = False) -> dict:
+         sync_secrets: bool = False, include_cron: bool = False) -> dict:
     """Attach this machine to an existing store and take its state on."""
     home = Path(home)
     data = data_dir(home)
@@ -337,6 +357,9 @@ def join(home: Path, store_path: str, code: str, *, name: str | None = None,
         "version": STATE_VERSION,
         "store": str(path),
         "remote": remote,
+        # Cron is opt-in per machine. Without --cron here, a peer's cron jobs
+        # are declined even when the machine that made the store syncs them.
+        "sync_cron": bool(include_cron),
         "created_at": now(),
         "device": {
             "id": ident["device_id"],
@@ -378,7 +401,7 @@ def leave(home: Path) -> dict:
 def push(ctx: Context) -> dict:
     with ctx.lock:
         base = _load_base(ctx)
-        include_cron = bool(ctx.state.get("sync_cron"))
+        include_cron = _cron_opt_in(ctx)
         local = items_mod.scan(ctx.home, ctx.policy, include_cron=include_cron)
         mine = ctx.store.read_device(ctx.device["id"])
         my_items: dict[str, Entry] = {}
@@ -431,7 +454,7 @@ def push(ctx: Context) -> dict:
         for item_id in set((base.get("pushed") or {})) - left:
             known_kind = ((my_items.get(item_id).kind if item_id in my_items else "")
                           or ((base.get("items") or {}).get(item_id) or {}).get("kind") or "file")
-            if not ctx.policy.wants(known_kind):
+            if not ctx.policy.wants(known_kind) or not _takes_item(ctx, item_id):
                 continue                          # out of scope, not deleted
             if item_id in platform_skipped or not _deletable(item_id):
                 # Absent from scan is not the same as deleted: this build may
@@ -506,6 +529,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
         base_items = dict(base.get("items") or {})
         applied, skipped, conflicts, removed = [], [], [], []
         deferred: list[str] = []
+        declined: list[str] = []
         resolved: set[str] = set()
         warnings: list[str] = []
         stamp = _unique_stamp(ctx)
@@ -521,7 +545,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
 
         write_json(ctx.data / "state.json", ctx.state)
 
-        local = items_mod.scan(ctx.home, ctx.policy, include_cron=bool(ctx.state.get("sync_cron")))
+        local = items_mod.scan(ctx.home, ctx.policy, include_cron=_cron_opt_in(ctx))
         by_item = ctx.store.entries_by_item()
         for item_id, entry in sorted(merged.items()):
             if entry.device_id == ctx.device["id"]:
@@ -530,6 +554,19 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                 # A knowledge-scope machine does not take settings from the
                 # herd, and does not record them as agreed either — switching
                 # scope later must still see them as new.
+                continue
+            if not _takes_item(ctx, item_id):
+                # Cron jobs run commands unattended. A machine that did not opt
+                # in with --cron neither installs nor deletes them, and does not
+                # record them as agreed, so opting in later still sees them.
+                declined.append(item_id)
+                seen = dict(ctx.state.get("declined_seen") or {})
+                if seen.get(item_id) != entry.rev:
+                    warnings.append(
+                        "Skipped cron jobs from another machine: cron sync is off here. "
+                        "Join or pair this machine with --cron to take them.")
+                    seen[item_id] = entry.rev
+                    ctx.state["declined_seen"] = seen
                 continue
             if entry.kind == "env":
                 # Do not decrypt and do not apply. An env item from an older
@@ -602,7 +639,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
                         frozen.discard(item_id)
                         resolved.add(item_id)
                     base_items[item_id] = _row(entry)
-                    base["config"] = json.loads(body.decode()) if body else {}
+                    base["config"] = items_mod.scrub(json.loads(body.decode()) if body else {}, ctx.policy)
                     continue
                 if decision == "conflict":
                     record_base = False
@@ -780,6 +817,7 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
             "removed": removed,
             "already_current": len(skipped),
             "deferred": deferred,
+            "declined": declined,
             "conflicts": conflicts,
             "warnings": warnings,
             "backup": backup if (applied or removed) else None,
@@ -788,11 +826,15 @@ def pull(ctx: Context, prefer: str = "local") -> dict:
 
 def _apply_config(ctx: Context, payload: bytes, base: dict, local: dict, prefer: str, stamp: str,
                   report: bool = True) -> dict:
-    remote = json.loads(payload.decode())
+    # The incoming payload goes through the same filter as an outgoing one: a
+    # peer (or a store written by 1.2.0) cannot inject or overwrite a
+    # credential or any other key this machine keeps to itself. The merge then
+    # keeps this machine's own value for every one of them.
+    remote = items_mod.scrub(json.loads(payload.decode()), ctx.policy)
     item = local.get("config")
     local_dict = (item.extra.get("live") if item else None) or {}
     local_text = (item.extra.get("text") if item else "") or ""
-    base_conf = base.get("config") or {}
+    base_conf = items_mod.scrub(base.get("config") or {}, ctx.policy)
 
     result = config_merge.merge(base_conf, local_dict, remote, ctx.policy.is_local_only, prefer=prefer)
     # Conflicts are reported even when the merge changes nothing: "both sides
@@ -1137,7 +1179,7 @@ def status(home: Path) -> dict:
     # and they do not push; the report is the store as it sits on disk.
     ctx.store.refresh(fetch_only=True)
     base = _load_base(ctx)
-    local = items_mod.scan(ctx.home, ctx.policy, include_cron=bool(ctx.state.get("sync_cron")))
+    local = items_mod.scan(ctx.home, ctx.policy, include_cron=_cron_opt_in(ctx))
     merged = ctx.store.merged()
     rows = []
     for item_id in sorted(set(local) | set(merged) | set(base.get("items") or {})):
@@ -1145,7 +1187,7 @@ def status(home: Path) -> dict:
         remote = merged.get(item_id)
         known = (base.get("items") or {}).get(item_id) or {}
         kind = (mine.kind if mine else (remote.kind if remote else known.get("kind") or ""))
-        if kind and not ctx.policy.wants(kind):
+        if (kind and not ctx.policy.wants(kind)) or not _takes_item(ctx, item_id):
             continue                      # out of scope is not "waiting to pull"
         local_oid = crypto.object_id(ctx.key, mine.payload) if mine else ""
         state = _item_sync_state(mine, remote, known, ctx.device["id"], local_oid)
@@ -1334,7 +1376,7 @@ def pair_start(home: Path, store_path: str | None = None, *, remote: str = "",
 
 
 def pair_finish(home: Path, code: str, store_path: str | None = None, *, name: str | None = None,
-                sync_secrets: bool = False) -> dict:
+                sync_secrets: bool = False, include_cron: bool = False) -> dict:
     """Join with a pairing code instead of the long recovery code."""
     home = Path(home)
     path = Path(store_path or DEFAULT_STORE).expanduser()
@@ -1349,7 +1391,8 @@ def pair_finish(home: Path, code: str, store_path: str | None = None, *, name: s
     meta = read_json(path / "store.json", {}) or {}
     payload = pairing.open_payload(code, read_json(pfile, {}) or {}, str(meta.get("store_id") or ""))
     target = str(path) if path.exists() else (payload.get("remote") or str(path))
-    joined = join(home, target, str(payload.get("code") or ""), name=name, sync_secrets=sync_secrets)
+    joined = join(home, target, str(payload.get("code") or ""), name=name, sync_secrets=sync_secrets,
+                  include_cron=include_cron)
     with contextlib.suppress(OSError):
         pfile.unlink()
     return {**joined, "paired_with": payload.get("device") or "another machine"}
@@ -1363,6 +1406,19 @@ def _forget_conflict(ctx: Context, item_id: str) -> None:
         ctx.state["frozen"] = sorted(frozen)
         write_json(ctx.data / "state.json", ctx.state)
     _record_conflicts(ctx, [], resolved={item_id})
+
+
+def _dig(data: dict, dotted: str):
+    """Return the value at *dotted*, or ``MISSING`` when any component is absent."""
+    node: Any = data
+    for part in dotted.split("."):
+        if not part:
+            continue
+        if isinstance(node, dict) and part in node:
+            node = node[part]
+        else:
+            return config_merge.MISSING
+    return node
 
 
 def _write_config_value(ctx: Context, dotted: str, value) -> None:
@@ -1422,8 +1478,28 @@ def resolve(home: Path, item_id: str, choice: str) -> dict:
         return {"ok": True, "item": item_id, "choice": "mine", **report}
 
     applied = "value"
+    if not _takes_item(ctx, item_id):
+        raise HerdError(f"{item_id} is not synced on this machine (cron sync is off). Keep yours instead.")
+    if item_id == "config" and row.get("path") and ctx.policy.is_local_only(str(row["path"])):
+        raise HerdError(f"{row['path']} stays on this machine; another machine's value is never written here.")
     if item_id == "config" and row.get("path"):
-        _write_config_value(ctx, str(row["path"]), row.get("remote"))
+        # "Theirs" is still incoming config. Strip anything credential-shaped
+        # the conflict record captured, and put this machine's own values back
+        # so adopting a provider list does not drop its api_key.
+        path = str(row["path"])
+        dest = ctx.home / "config.yaml"
+        text = dest.read_text(encoding="utf-8") if dest.exists() else ""
+        try:
+            live = yamlutil.safe_load(text) or {}
+        except Exception:
+            live = {}
+        local_value = _dig(live if isinstance(live, dict) else {}, path)
+        remote_value = row.get("remote")
+        if local_value is config_merge.MISSING:
+            adopted = None if remote_value is None else credentials.strip(remote_value, path)
+        else:
+            adopted = credentials.preserve(remote_value, local_value, path)
+        _write_config_value(ctx, path, adopted)
     elif item_id == "env":
         raise HerdError(SECRETS_UNSUPPORTED)
     else:
@@ -1453,7 +1529,7 @@ def resolve(home: Path, item_id: str, choice: str) -> dict:
     # The local item now equals what the peer published, so the next push is a
     # no-op and the base can record agreement.
     base = _load_base(ctx)
-    local = items_mod.scan(ctx.home, ctx.policy, include_cron=bool(ctx.state.get("sync_cron")))
+    local = items_mod.scan(ctx.home, ctx.policy, include_cron=_cron_opt_in(ctx))
     entry = local.get(item_id)
     items = dict(base.get("items") or {})
     if entry is not None:
@@ -1462,7 +1538,7 @@ def resolve(home: Path, item_id: str, choice: str) -> dict:
                           "rev": known.get("rev", 0), "kind": entry.kind}
     base["items"] = items
     if item_id == "config" and entry is not None:
-        base["config"] = entry.extra.get("live") or {}
+        base["config"] = items_mod.scrub(entry.extra.get("live") or {}, ctx.policy)
     write_json(ctx.data / "base.json", base)
 
     _forget_conflict(ctx, item_id)

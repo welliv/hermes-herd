@@ -16,6 +16,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 
 from . import yamlutil
+from .credentials import is_credential_path
 
 # Keyed by dotted config path. Anything matched is never read from or written to
 # another machine. Prefix matches are intentional: a new Docker tuning knob ships
@@ -72,6 +73,10 @@ POLICY_HEADER = """\
 # Herd sync policy — this file is per machine and never synced.
 #
 # local_only: config paths this machine keeps to itself (dotted paths, * wildcards)
+#             Credential-named keys (api_key, token, secret, password,
+#             authorization, *_api_key, *_token, ...) at any depth, and
+#             mcp_servers.*.env / mcp_servers.*.headers, always stay local;
+#             `shared` cannot override that.
 # shared:     paths that are local-only by default but should follow you here
 # scope:      profile = settings, skills and memory; knowledge = skills and memory only
 # secret_skip: .env keys that stay on this machine
@@ -106,6 +111,9 @@ class Policy:
 
     # ── matching ─────────────────────────────────────────────────────────────
     def is_local_only(self, path: str) -> bool:
+        # Credentials first: `shared:` cannot lift them (see credentials.py).
+        if is_credential_path(path):
+            return True
         if any(_matches(path, p) for p in self.shared):
             return False
         return any(_matches(path, p) for p in self.local_only)

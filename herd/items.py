@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import yamlutil
+from . import credentials, yamlutil
 from .policy import Policy
 from .util import atomic_write
 
@@ -51,20 +51,28 @@ def scrub(conf: Any, policy: Policy, prefix: str = "") -> Any:
 
     Keeping the shape matters: an empty mapping still tells the remote that the
     section exists, while dropping a local-only scalar leaves no trace of it.
+
+    The same function filters what arrives from a peer, so a credential the
+    peer put in its payload never reaches the merge. Lists are not addressable
+    by dotted path, so credential-named keys inside them are stripped by name.
     """
     if isinstance(conf, dict):
         out = {}
         for key, value in conf.items():
             path = f"{prefix}.{key}" if prefix else str(key)
-            if policy.is_local_only(path):
+            if policy.is_local_only(path) or credentials.is_credential_path(path):
                 continue
             if isinstance(value, dict):
                 child = scrub(value, policy, path)
                 if child:
                     out[key] = child
+            elif isinstance(value, list):
+                out[key] = credentials.strip(value, path)
             else:
                 out[key] = value
         return out
+    if isinstance(conf, list):
+        return credentials.strip(conf, prefix)
     return conf
 
 
