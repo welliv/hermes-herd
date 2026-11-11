@@ -75,6 +75,7 @@ def handle_status(args: dict, **_kw) -> str:
             "last_sync_human": state.get("last_sync_human"),
             "secrets_synced": state["secrets"],
             "counts": state["counts"],
+            "transport": state.get("transport"),
             "differs": [
                 r["item"] for r in state["items"]
                 if r["state"] in ("local-ahead", "remote-ahead", "diverged", "not-pushed")

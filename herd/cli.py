@@ -150,10 +150,16 @@ def cmd_pair(args) -> int:
     _print(f"  code   {result['code']}")
     _print(f"         works once, for {minutes} minutes.")
     _print()
-    _print("On the other machine, with this store folder reachable:")
-    _print(f"  hermes sync pair --code {result['code']}")
     if result.get("remote"):
-        _print(f"  (it will clone {result['remote']})")
+        _print("The short code is in this store folder, not on the git remote.")
+        _print("On a machine that can see this folder:")
+        _print(f"  hermes sync pair --code {result['code']}")
+        _print("On a machine that only has the git remote:")
+        _print(f"  hermes sync join {result['remote']} --code HERD-…")
+        _print("  (print the recovery code with `hermes sync code`)")
+    else:
+        _print("On the other machine, with this store folder reachable:")
+        _print(f"  hermes sync pair --code {result['code']}")
     return 0
 
 
@@ -274,7 +280,9 @@ def cmd_diff(args) -> int:
         _dump(result)
         return 0
     review = set(result.get("review_before_pull") or [])
-    if not result["would_push"] and not result["would_pull"] and not result.get("diverged"):
+    transport = result.get("transport") or {}
+    git_split = bool(transport.get("ahead") or transport.get("behind"))
+    if not result["would_push"] and not result["would_pull"] and not result.get("diverged") and not git_split:
         _print("Nothing to do — every item matches the store.")
         return 0
     for item in result["would_push"]:
@@ -284,6 +292,11 @@ def cmd_diff(args) -> int:
         _print(f"  ↓ {item}{note}")
     for item in result.get("diverged") or []:
         _print(f"  ~ {item}  (changed on both sides — not pushed)")
+    if git_split:
+        _print(
+            f"  git ahead {int(transport['ahead'])}, behind {int(transport['behind'])}"
+            " — the clone is not caught up with the remote"
+        )
     return 0
 
 
@@ -389,6 +402,8 @@ def cmd_conflicts(args) -> int:
     for index, row in enumerate(rows, 1):
         item = row.get("item", "?")
         _print(f"{item} · {row.get('path', '?')}")
+        if row.get("reason"):
+            _print(f"  reason  {row['reason']}")
         mine = json.dumps(row.get("local"))
         theirs = json.dumps(row.get("remote"))
         _print(f"  1  this machine   {mine[:150]}")

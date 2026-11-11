@@ -64,6 +64,21 @@ Fixes from the catalog review of 1.2.0 (NousResearch/hermes-agent#151037).
   with `.env` keys, so it is treated as able to run code here; secrets written into skills, `MEMORY.md`, `USER.md` or `SOUL.md` are
   not filtered and sync as written; `docs/AUDIT.md` maps the 1.2.1 claims to
   their tests.
+- **Status is honest about a git store that has diverged.** After a fetch,
+  `hermes sync status` (and `sync_status` / `sync_diff`) reports
+  `transport: {ahead, behind, branch}` and lists device manifests that exist
+  on `origin/<branch>` but not in this checkout. The summary does not say
+  "In sync" when either count is non-zero; it says `git ahead N, behind M`.
+- **`hermes sync conflicts --item config --take theirs` applies every
+  recorded config path**, not only the first. Credentials are still
+  preserved. The human conflict list prints `reason  credential-endpoint`
+  (and any other reason on the row).
+- **`pairing.json` is never committed to a git remote.** It seals the
+  recovery code with the short pair code; a commit would leave that
+  ciphertext in git history after the file is deleted. The file is
+  gitignored, unstaged if an older commit added it, and deleted locally
+  after a successful folder pair. A git-only second machine joins with
+  the recovery code: `hermes sync join <git-url> --code HERD-…`.
 - `hermes sync policy` prints the credential rule.
 - `audit/matrix.py`: the same-device serialisation check read whichever
   device manifest the folder listed first, so it failed about half the time

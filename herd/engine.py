@@ -1209,6 +1209,15 @@ def status(home: Path) -> dict:
             "items": len(doc.get("items") or {}),
             "this_device": (d.get("id") or path.stem) == ctx.device["id"],
         })
+    # Fetch does not rebase, so a clone can match its own files while origin
+    # has other machines and other commits. Say so, and count those machines.
+    transport = ctx.store.divergence()
+    if transport and transport.get("behind"):
+        known = {d["id"] for d in devices}
+        for extra in ctx.store.remote_devices(transport):
+            if extra["id"] not in known:
+                extra["this_device"] = extra["id"] == ctx.device["id"]
+                devices.append(extra)
     return {
         "device": ctx.device,
         "store": str(ctx.store.root),
@@ -1231,6 +1240,7 @@ def status(home: Path) -> dict:
             "not_pushed": sum(1 for r in rows if r["state"] == "not-pushed"),
             "not_local": sum(1 for r in rows if r["state"] == "not-local"),
         },
+        "transport": transport,
         "devices": devices,
     }
 
@@ -1258,6 +1268,7 @@ def diff(home: Path) -> dict:
             if r["state"] in _PULL_STATES and _is_instruction(r["item"], r.get("kind") or "")
         ],
         "device": state["device"],
+        "transport": state.get("transport"),
         "read_only": True,
     }
 
@@ -1372,6 +1383,10 @@ def pair_start(home: Path, store_path: str | None = None, *, remote: str = "",
     }
     doc = pairing.seal(code, payload, ctx.store.store_id, ttl=ttl)
     atomic_write(ctx.store.root / "pairing.json", json.dumps(doc).encode(), mode=0o644)
+    # Never commit pairing.json. The sealed payload holds the recovery code;
+    # a git commit would leave that ciphertext in history after the file is
+    # deleted. A later `git add -A` (publish) must not pick it up either.
+    ctx.store.protect_pairing_file()
     return {
         "code": code,
         "store": str(ctx.store.root),
@@ -1381,18 +1396,45 @@ def pair_start(home: Path, store_path: str | None = None, *, remote: str = "",
     }
 
 
+def _pairing_checkout(home: Path, store_path: str | None) -> Path:
+    """The working store that may hold ``pairing.json``.
+
+    A folder or a working clone is used as-is (and fetched if it is git, so
+    status is current). A git URL or bare repo is cloned for join-with-recovery
+    or for an error that can point at that path; the short code is not on the
+    remote, so this will not find pairing.json there.
+    """
+    raw = (store_path or "").strip()
+    home = Path(home)
+    candidate = Path(raw).expanduser() if raw else Path(DEFAULT_STORE).expanduser()
+    if raw and store_mod.looks_like_git(raw) and not (candidate / "store.json").exists():
+        dest = data_dir(home) / "store"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if (dest / ".git").exists():
+            store_mod.open_store(dest).refresh()
+            return dest
+        return store_mod.clone(raw, dest)
+    if (candidate / ".git").exists():
+        store_mod.open_store(candidate).refresh()
+    return candidate
+
+
 def pair_finish(home: Path, code: str, store_path: str | None = None, *, name: str | None = None,
                 sync_secrets: bool = False, include_cron: bool = False) -> dict:
     """Join with a pairing code instead of the long recovery code."""
     home = Path(home)
-    path = Path(store_path or DEFAULT_STORE).expanduser()
+    path = _pairing_checkout(home, store_path)
     pfile = path / "pairing.json"
     if not pfile.exists():
+        where = (store_path or "").strip() or str(path)
         raise HerdError(
-            f"No pairing code is waiting at {path}.\n"
-            "Run `hermes sync pair` on the machine that already syncs, then pass the "
-            "same store folder here — or use `hermes sync join <store> --code HERD-…` "
-            "with the recovery code."
+            f"No pairing code is waiting at {where}.\n"
+            "The short code lives in pairing.json in the store folder; it is not "
+            "pushed to a git remote, because it wraps the recovery code and would "
+            "remain in git history after use. On a machine that can see the store "
+            "folder: `hermes sync pair --code <code>`. On a machine that only has "
+            "the git remote: `hermes sync join <git-url> --code HERD-…` "
+            "(`hermes sync code` prints the recovery code)."
         )
     meta = read_json(path / "store.json", {}) or {}
     payload = pairing.open_payload(code, read_json(pfile, {}) or {}, str(meta.get("store_id") or ""))
@@ -1486,29 +1528,36 @@ def resolve(home: Path, item_id: str, choice: str) -> dict:
     applied = "value"
     if not _takes_item(ctx, item_id):
         raise HerdError(f"{item_id} is not synced on this machine (cron sync is off). Keep yours instead.")
-    if item_id == "config" and row.get("path") and ctx.policy.is_local_only(str(row["path"])):
-        raise HerdError(f"{row['path']} stays on this machine; another machine's value is never written here.")
-    if item_id == "config" and row.get("path"):
-        # "Theirs" is still incoming config. Strip anything credential-shaped
-        # the conflict record captured, and put this machine's own values back
-        # so adopting a provider list does not drop its api_key.
-        path = str(row["path"])
-        dest = ctx.home / "config.yaml"
-        text = dest.read_text(encoding="utf-8") if dest.exists() else ""
-        try:
-            live = yamlutil.safe_load(text) or {}
-        except Exception:
-            live = {}
-        local_value = _dig(live if isinstance(live, dict) else {}, path)
-        remote_value = row.get("remote")
-        if local_value is config_merge.MISSING:
-            adopted = None if remote_value is None else credentials.strip(remote_value, path)
-        else:
-            # The user chose theirs on purpose, so an endpoint the pull held
-            # back beside a local credential is taken now. Credentials still
-            # are not: this machine's own stay, and the peer's never arrive.
-            adopted = credentials.preserve(remote_value, local_value, path, pin=False)
-        _write_config_value(ctx, path, adopted)
+    config_rows = [r for r in rows if r.get("item") == "config" and r.get("path")]
+    if item_id == "config" and config_rows:
+        # One pull often records several keys (provider and base_url, command
+        # and args). Writing the first and forgetting the rest left the others
+        # pinned, with nothing left to accept.
+        writable = [r for r in config_rows if not ctx.policy.is_local_only(str(r["path"]))]
+        if not writable:
+            path = str(config_rows[0]["path"])
+            raise HerdError(f"{path} stays on this machine; another machine's value is never written here.")
+        for row in writable:
+            # "Theirs" is still incoming config. Strip anything credential-shaped
+            # the conflict record captured, and put this machine's own values back
+            # so adopting a provider list does not drop its api_key.
+            path = str(row["path"])
+            dest = ctx.home / "config.yaml"
+            text = dest.read_text(encoding="utf-8") if dest.exists() else ""
+            try:
+                live = yamlutil.safe_load(text) or {}
+            except Exception:
+                live = {}
+            local_value = _dig(live if isinstance(live, dict) else {}, path)
+            remote_value = row.get("remote")
+            if local_value is config_merge.MISSING:
+                adopted = None if remote_value is None else credentials.strip(remote_value, path)
+            else:
+                # The user chose theirs on purpose, so an endpoint the pull held
+                # back beside a local credential is taken now. Credentials still
+                # are not: this machine's own stay, and the peer's never arrive.
+                adopted = credentials.preserve(remote_value, local_value, path, pin=False)
+            _write_config_value(ctx, path, adopted)
     elif item_id == "env":
         raise HerdError(SECRETS_UNSUPPORTED)
     else:
@@ -1574,6 +1623,9 @@ def summary(home: Path) -> str:
         parts.append(f"{waiting_in} change(s) to pull")
     if counts["diverged"]:
         parts.append(f"{counts['diverged']} item(s) changed on both sides")
+    transport = state.get("transport") or {}
+    if transport.get("ahead") or transport.get("behind"):
+        parts.append(f"git ahead {int(transport['ahead'])}, behind {int(transport['behind'])}")
     parts = parts or ["In sync"]
     machines = len(state["devices"])
     return f"{' · '.join(parts)} · {machines} machine{'s' if machines != 1 else ''} · synced {state['last_sync_human']}"

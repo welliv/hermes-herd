@@ -9,9 +9,12 @@ single-use code in front of it:
 * The second machine reads that file, unseals the real key, joins, and the file
   is deleted. One code, one machine, one window.
 
-The payload travels through the store, so both machines must be able to reach
-it (a shared folder, a synced folder, or a git remote the second machine can
-clone). Nothing is sent anywhere else.
+The payload travels through the store folder, so both machines must be able to
+reach that folder (a shared folder or a synced folder). It is not pushed to a
+git remote: the sealed payload holds the recovery code, and a commit would
+leave that ciphertext in git history after the file is deleted. For a git-only
+second machine, use the recovery code (`hermes sync join <git-url> --code HERD-…`).
+Nothing is sent anywhere else.
 """
 
 from __future__ import annotations

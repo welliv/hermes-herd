@@ -160,7 +160,7 @@ Paired with desktop. This machine is laptop.
   In sync · 2 machines · synced just now
 ```
 
-The store is a folder: put it in Dropbox/iCloud/Syncthing so both machines see it, or pass `--remote <git-url>` on the first machine — then the second needs only the code and clones it. One code works once, for 15 minutes; the long recovery code still exists for a machine that has the folder but not the code (`hermes sync code`, `hermes sync join`).
+The store is a folder: put it in Dropbox/iCloud/Syncthing so both machines see it, then the second machine types the short code. One code works once, for 15 minutes, and is deleted after use. If you pass `--remote <git-url>` instead, the short code is not pushed: `pairing.json` wraps the recovery code, and a git commit would leave that ciphertext in history after the file is deleted. The second machine joins with the long recovery code: `hermes sync join <git-url> --code HERD-…` (`hermes sync code` prints it).
 
 Hermes 0.23+.
 
@@ -183,7 +183,7 @@ The trust boundary is the other machine. Read [`SECURITY.md`](SECURITY.md) befor
 - **A paired machine can change what the agent follows.** A pull writes `skills/`, `memories/MEMORY.md`, `memories/USER.md` and `SOUL.md`. Hermes loads those as instructions, not as quoted notes. `sync_diff` lists them under `review_before_pull`. `sync_now` asks Hermes for approval before it pulls or pushes. Cron, `hermes -q`, and any other non-interactive session skip the pull instead of prompting. `config.yaml` follows too: a paired machine can add an MCP server (a command Hermes starts here) or change the provider used with this machine's `.env` keys, so treat it as able to run code here.
 - **Joining replaces this machine's memory with the herd's.** `MEMORY.md` and `USER.md` on the joining machine are replaced. The previous text is saved at `plugin-data/herd/pre-join-MEMORY.md` (and `pre-join-USER.md` when that file differed), and the join output says so. It is not merged into the herd, because publishing the merge would make every other machine adopt this machine's notes. Copy back anything you still want.
 - **API keys are not synced.** Credential-named keys in `config.yaml` (`api_key`, `API_KEY`, `apiKey`, `x-api-key`, `token`, `secret`, `password`, `authorization`, and `*_api_key`, `*_token`, … at any depth, lists included) and `mcp_servers.*.env` / `mcp_servers.*.headers` never leave the machine. A peer's values are ignored on pull, and a peer cannot overwrite or delete the local ones. Herd does not read or write `~/.hermes/.env`, does not call `load_env_file`, and does not export provider keys through `get_secret`. Hermes has no API that can move those keys without opening the file, and a listed plugin may not open it. `hermes sync secrets on` refuses. `--sync-secrets` is ignored. An `env` item left by an older version stays ciphertext and is not applied.
-- **A peer cannot point your key somewhere else.** In a section that holds a credential on this machine (`model`, a `custom_providers` entry, an MCP server with `env` or `headers`, a section whose `extra_headers` carry one), the keys that decide where it is sent — `base_url`, `url`, `endpoint`, `api_base`, `host`, `provider`, `command`, `args` — stay as they are here when a peer changes them. The rest of the peer's change is taken, and the held part is listed by `hermes sync conflicts` (reason `credential-endpoint`) until you keep yours or take theirs. A section with no local credential syncs these keys normally.
+- **A peer cannot point your key somewhere else.** In a section that holds a credential on this machine (`model`, a `custom_providers` entry, an MCP server with `env` or `headers`, a section whose `extra_headers` carry one), the keys that decide where it is sent — `base_url`, `url`, `endpoint`, `api_base`, `host`, `provider`, `command`, `args` — stay as they are here when a peer changes them. The rest of the peer's change is taken, and the held part is listed by `hermes sync conflicts` with the reason `credential-endpoint` until you keep yours or take theirs (`--item config --take theirs` applies every recorded config path, not only the first) A section with no local credential syncs these keys normally.
 - **Secrets written into skills, memory or `SOUL.md` do travel.** Herd filters `config.yaml` by key name; it does not scan `skills/`, `MEMORY.md`, `USER.md` or `SOUL.md`. Text in those files syncs as written, so keep keys out of them.
 - **Encrypted before it leaves.** One 32-byte key, stretched with scrypt, used for AES-256-GCM. The store holds ciphertext of config, skills, memory and `SOUL.md`.
 - **Names are keyed hashes.** Objects are addressed by `HMAC(key, plaintext)`, so the store can't be probed by hashing guesses at a known setting.
@@ -199,11 +199,11 @@ A store written by 1.0.2 or earlier holds unsealed objects. 1.0.3 skips them wit
 
 | | |
 |---|---|
-| **`hermes sync pair [--store PATH] [--remote URL] [--cron]`** | Create the herd and print one short, single-use code. `--cron` also syncs cron jobs on this machine |
+| **`hermes sync pair [store] [--remote URL] [--cron]`** | Create the herd and print one short, single-use code. The store is a positional path (`init` uses `--store`). `--cron` also syncs cron jobs on this machine |
 | **`hermes sync`** | Pull, merge, push — the one you type |
-| **`hermes sync conflicts`** | Review disagreements; `--item config --take mine\|theirs` settles one |
-| `hermes sync pair --code … [--cron]` | Join with that code (clones `--remote` if the store is git). `--cron` takes and syncs cron jobs here |
-| `hermes sync init` / `join` | The explicit path: choose a store, use the long recovery code |
+| **`hermes sync conflicts`** | Review disagreements; `--item config --take mine\|theirs` settles every recorded path on that item |
+| `hermes sync pair --code … [store] [--cron]` | Join with that code when the store folder is reachable here. `--cron` takes and syncs cron jobs here |
+| `hermes sync init` / `join` | The explicit path: choose a store or git URL, use the long recovery code |
 | `hermes sync status` / `diff` | What's in sync; what a sync would do |
 | `hermes sync scope knowledge\|profile` | Share skills and memory only, or the whole profile |
 | `hermes sync note [text]` | This machine's own paragraph in memory — never synced |

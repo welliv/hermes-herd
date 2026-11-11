@@ -104,14 +104,34 @@ class Store:
         self._write_gitignore()
 
     def _write_gitignore(self) -> None:
+        """Ignore bookkeeping files, including pairing.json.
+
+        pairing.json seals the recovery code with the short pair code. A git
+        commit would leave that ciphertext in history after the file is
+        deleted, so it must never be added. Existing stores get the rule
+        appended if it is missing.
+        """
         gi = self.root / ".gitignore"
-        if gi.exists():
+        text = gi.read_text(encoding="utf-8") if gi.exists() else ""
+        if any(line.strip() == "pairing.json" for line in text.splitlines()):
             return
-        atomic_write(
-            gi,
-            b"# Keep the store clean: git bookkeeping only.\n.git/\n*.tmp\n.DS_Store\n",
-            mode=0o644,
-        )
+        if not text:
+            text = (
+                "# Keep the store clean: git bookkeeping only.\n"
+                ".git/\n"
+                "*.tmp\n"
+                ".DS_Store\n"
+                "pairing.json\n"
+            )
+        else:
+            if not text.endswith("\n"):
+                text += "\n"
+            text += "pairing.json\n"
+        atomic_write(gi, text.encode("utf-8"), mode=0o644)
+
+    def protect_pairing_file(self) -> None:
+        """Keep pairing.json out of git. Folder stores only need the ignore rule."""
+        self._write_gitignore()
 
     @property
     def store_id(self) -> str:
@@ -261,6 +281,14 @@ class Store:
         ``publish``, and only a real push calls it.
         """
 
+    def divergence(self) -> dict | None:
+        """Git ahead/behind versus ``origin``, or ``None`` for a folder store."""
+        return None
+
+    def remote_devices(self, transport: dict | None = None) -> list[dict]:
+        """Device manifests that exist on the fetched remote but not in this checkout."""
+        return []
+
     def publish(self, message: str) -> dict:
         """Commit and push. Returns {committed, pushed, detail}."""
         return {"committed": False, "pushed": False, "detail": "local folder"}
@@ -369,11 +397,19 @@ class GitStore(Store):
             _git(["rebase", "--abort"], self.root, check=False)
             raise
 
+    def protect_pairing_file(self) -> None:
+        """Ignore pairing.json and drop it from the index if an older commit added it."""
+        self._write_gitignore()
+        if (self.root / ".git").exists():
+            _run_git(["rm", "--cached", "-q", "--ignore-unmatch", "pairing.json"], self.root, check=False)
+
     def publish(self, message: str) -> dict:
         if not self.root.exists():
             return {"committed": False, "pushed": False, "detail": "no store"}
         if not (self.root / ".git").exists():
             _git(["init", "--quiet"], self.root)
+        # Before `git add -A`, which would otherwise stage pairing.json.
+        self.protect_pairing_file()
         _git(["add", "-A"], self.root)
         status = _git(["status", "--porcelain"], self.root).stdout.strip()
         committed = False
@@ -388,6 +424,66 @@ class GitStore(Store):
             return {"committed": committed, "pushed": True, "detail": f"pushed to origin/{branch}"}
         except StoreError as exc:
             return {"committed": committed, "pushed": False, "detail": f"saved locally, push failed: {exc}"}
+
+    def divergence(self) -> dict | None:
+        """Commits this checkout has that origin does not, and the reverse.
+
+        Status fetches first and does not rebase, so the working tree can be
+        in sync with itself while the remote has moved. Callers use this to
+        avoid saying "in sync" about a clone that is ahead or behind.
+        """
+        if not self.root.exists() or not (self.root / ".git").exists():
+            return None
+        try:
+            if not self.has_remote():
+                return None
+            branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], self.root).stdout.strip() or "main"
+        except StoreError:
+            return None
+        rel = _run_git(
+            ["rev-list", "--left-right", "--count", f"HEAD...origin/{branch}"], self.root, check=False,
+        )
+        parts = (rel.stdout or "").split()
+        if rel.returncode != 0 or len(parts) != 2:
+            return None
+        try:
+            ahead, behind = int(parts[0]), int(parts[1])
+        except ValueError:
+            return None
+        return {"ahead": ahead, "behind": behind, "branch": branch}
+
+    def remote_devices(self, transport: dict | None = None) -> list[dict]:
+        info = self.divergence() if transport is None else transport
+        if not info or not info.get("behind"):
+            return []
+        branch = str(info.get("branch") or "main")
+        listed = _run_git(
+            ["ls-tree", "-r", "--name-only", f"origin/{branch}", "--", "devices"], self.root, check=False,
+        )
+        if listed.returncode != 0:
+            return []
+        found = []
+        for name in listed.stdout.splitlines():
+            if not name.endswith(".json") or ".." in Path(name).parts:
+                continue
+            shown = _run_git(["show", f"origin/{branch}:{name}"], self.root, check=False)
+            if shown.returncode != 0 or not shown.stdout:
+                continue
+            try:
+                doc = json.loads(shown.stdout)
+            except json.JSONDecodeError:
+                continue
+            dev = doc.get("device") or {}
+            stem = Path(name).name[:-5]
+            found.append({
+                "id": dev.get("id") or stem,
+                "name": dev.get("name") or stem,
+                "platform": dev.get("platform") or "?",
+                "last_push": doc.get("updated_at"),
+                "items": len(doc.get("items") or {}),
+                "this_device": False,
+            })
+        return found
 
 
 def open_store(root: str | Path) -> Store:

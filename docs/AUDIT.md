@@ -5,7 +5,7 @@ here so a claim without one can be deleted rather than believed.
 
 Five suites, all run in CI:
 
-- `python -m pytest tests -q` — **172 passed** (unit, two-device end-to-end, pairing, conflict resolution, knowledge scope, per-machine memory note, approval, undo, and the 1.2.1 review tests in `test_review_1_2_1.py` and `test_endpoint_pin.py`).
+- `python -m pytest tests -q` — **176 passed** (unit, two-device end-to-end, pairing, conflict resolution, knowledge scope, per-machine memory note, approval, undo, and the 1.2.1 review tests in `test_review_1_2_1.py`, `test_endpoint_pin.py`, and `test_followup_121.py`).
 - `python audit/matrix.py` — **55 checks**: crypto, merge orderings, env, items,
   forged stores, concurrency, surface, cost.
 - `python audit/fuzz.py` — randomised three-device histories: edits, pushes,
@@ -36,7 +36,9 @@ corrupt-store runs.
 | Credential-named keys in `config.yaml` never reach the store (any depth, lists, camelCase, `mcp_servers.*.env` / `headers`) | `test_model_api_key_never_reaches_the_store`; `test_case_variants_nested_lists_and_other_env_sections_stay_local`; `test_credential_names` / `test_not_credential_names`; `test_three_homes_through_a_bare_repo_leak_no_secret` |
 | `shared:` cannot lift the credential rule | `test_shared_cannot_lift_the_credential_rule` |
 | A peer cannot inject, overwrite or delete a local credential (null, empty list, shape change, `--take theirs`) | `test_a_peer_cannot_inject_or_overwrite_credentials`; `test_incoming_poison_cannot_overwrite_or_delete_local_secrets`; `test_a_real_push_cannot_null_out_a_local_secret`; `test_fresh_join_does_not_receive_a_poisoned_api_key`; `test_take_theirs_does_not_import_or_drop_credentials`; `test_list_change_from_a_peer_keeps_local_list_credentials`; `test_shape_changes_do_not_drop_local_credentials` |
-| A peer cannot point a local credential elsewhere (`base_url`, `provider`, MCP `command` / `args`, …); the held change is shown and `--take theirs` applies it | `test_peer_cannot_redirect_local_key_via_base_url`; `test_peer_cannot_hand_local_mcp_env_to_a_new_command`; `test_peer_cannot_add_an_endpoint_or_switch_provider_beside_a_key`; `test_held_endpoint_is_shown_does_not_ping_pong_and_take_theirs_applies_it`; `test_held_list_endpoint_is_shown_and_take_theirs_applies_it`; `test_a_header_credential_pins_its_endpoint` |
+| A peer cannot point a local credential elsewhere (`base_url`, `provider`, MCP `command` / `args`, …); the held change is shown and `--take theirs` applies every path | `test_peer_cannot_redirect_local_key_via_base_url`; `test_peer_cannot_hand_local_mcp_env_to_a_new_command`; `test_peer_cannot_add_an_endpoint_or_switch_provider_beside_a_key`; `test_held_endpoint_is_shown_does_not_ping_pong_and_take_theirs_applies_it`; `test_held_list_endpoint_is_shown_and_take_theirs_applies_it`; `test_a_header_credential_pins_its_endpoint`; `test_take_theirs_applies_every_held_endpoint`; `test_conflict_text_shows_the_reason` |
+| Status does not say "In sync" while a git clone is ahead or behind, and it still lists the unmerged machine | `test_status_reports_git_divergence_and_the_unmerged_machine` |
+| `pairing.json` is never committed to a git remote; a git-only machine joins with the recovery code | `test_pairing_json_is_kept_out_of_a_git_remote` |
 | Endpoints with no local credential beside them still sync, and ordinary edits raise no conflict | `test_endpoint_without_local_credential_still_syncs`; `test_endpoints_follow_onto_a_machine_without_the_key`; `test_normal_edits_beside_a_key_raise_no_conflict` |
 | Cron jobs land only where this machine opted in, and are never deleted elsewhere | `test_cron_is_not_installed_where_cron_sync_is_off`; `test_cron_deletion_does_not_touch_a_declining_machine`; `test_cron_still_syncs_where_both_machines_opted_in`; `test_cron_skip_is_recorded_and_not_reapplied_until_opt_in` |
 | `--cron` works at `init`, `join`, `pair` and `pair --code` | `test_pair_without_cron_does_not_install_jobs`; `test_pair_cron_on_the_first_machine_opts_it_in`; `test_pair_cron_on_a_machine_that_already_syncs_turns_it_on`; `test_cli_pair_passes_cron_to_the_first_machine` |
@@ -59,7 +61,7 @@ corrupt-store runs.
 | Two devices cannot clobber each other's manifests | `test_git_transport_clones_to_a_second_machine`; matrix `concurrency/*` |
 | Fast enough to run on session start | matrix `cost/*` — 200 skills 1.2 s, 5 MB skill 0.5 s, hook 2.3 ms |
 | The plugin is loadable and honest about itself | `hermes plugins validate .` — all checks pass; declared tools, hooks and CLI match |
-| The whole suite is green | `pytest` 172, `matrix.py` 55/55, randomised histories clean |
+| The whole suite is green | `pytest` 176, `matrix.py` 55/55, randomised histories clean |
 
 ## What the vision promises that the build does not do yet
 

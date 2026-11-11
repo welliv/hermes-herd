@@ -100,6 +100,13 @@ The recovery code decrypts the store. The store holds config (without the
 credentials above), skills, memory and `SOUL.md`, and anything written in
 them. Keep the code in a password manager.
 
+The short pairing code is a 15-minute wrapper around that recovery code,
+written to `pairing.json` in the store folder. Herd does not commit that
+file to a git remote: deleting it after use would not remove the ciphertext
+from git history, and anyone who later had the short code could unwrap the
+recovery code from an old commit. For a git-only second machine, use
+`hermes sync join <git-url> --code HERD-…`.
+
 ## What a sync writes
 
 Inside the Hermes home: `config.yaml` (per key, machine-bound keys left
